@@ -110,3 +110,14 @@ server.listen(80, function () {
   var port = server.address().port;
   console.log('App running on port ' + port);
 });
+
+// Rolling updates send SIGTERM: stop accepting, drain in-flight requests, then exit.
+process.on('SIGTERM', function () {
+  server.close(function () {
+    process.exit(0);
+  });
+  io.close();
+  setTimeout(function () {
+    process.exit(0);
+  }, 10000).unref();
+});

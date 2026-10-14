@@ -12,6 +12,9 @@ WORKDIR /app
 
 COPY --from=build /app/target/worker-jar-with-dependencies.jar ./worker.jar
 
+RUN useradd --system --uid 10001 app
+USER 10001
+
 EXPOSE 80
 
 CMD ["java", "-jar", "worker.jar"]

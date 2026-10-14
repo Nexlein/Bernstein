@@ -1,5 +1,5 @@
 var app = angular.module('poll-app', []);
-var socket = io.connect({ transports: ['polling'] });
+var socket = io.connect({ transports: ['websocket'] });
 
 app.controller('statsCtrl', function ($scope) {
   $scope.aPercent = 25;
