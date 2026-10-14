@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(kubectl get*)",
+      "Bash(kubectl describe*)",
+      "Bash(kubectl logs*)",
+      "Bash(kubectl diff*)",
+      "Bash(kubectl rollout status*)",
+      "Bash(docker build*)",
+      "Bash(docker compose*)",
+      "Bash(node scripts/codemap.mjs*)",
+      "Bash(npm run *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git branch*)",
+      "Bash(git switch*)"
+    ],
+    "deny": [
+      "Read(./node_modules/**)",
+      "Read(./target/**)",
+      "Read(./poll-application/worker/target/**)",
+      "Read(./poll-application/result/node_modules/**)",
+      "Read(./doc/subject/bernstein-project.pdf)",
+      "Read(./project-applications.zip)",
+      "Read(./.git/**)",
+      "Read(**/*.secret)",
+      "Read(**/*kubeconfig*)",
+      "Read(./.env)",
+      "Read(./.env.*.local)",
+      "Read(./**/secret.yaml)"
+    ]
+  }
+}
