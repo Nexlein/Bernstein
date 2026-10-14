@@ -33,4 +33,4 @@ jobs:
         run: |
           ssh-keyscan github.com >> ~/.ssh/known_hosts
           git remote add epitech "$EPITECH_REPO_URL"
-          git push epitech HEAD:main --force
+          git push epitech HEAD:refs/heads/main --force
