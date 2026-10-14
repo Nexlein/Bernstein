@@ -133,7 +133,7 @@ docker compose down -v
 ├── secret.example.yaml       # Template for Kubernetes secrets
 ├── .env.example              # Template for environment variables
 ├── CLAUDE.md                 # Agent instructions, architecture & guardrails
-├── TODO.md                   # Project implementation checklist & roadmap
+├── TODO.md                   # Roadmap pointer + technical decisions
 └── package.json              # Development scripts (format, codemap, husky)
 ```
 
