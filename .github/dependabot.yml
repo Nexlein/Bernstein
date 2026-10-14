@@ -54,6 +54,9 @@ updates:
       day: monday
     commit-message:
       prefix: chore(deps-docker-poll)
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: docker
     directory: /poll-application/result
@@ -62,6 +65,9 @@ updates:
       day: monday
     commit-message:
       prefix: chore(deps-docker-result)
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: docker
     directory: /poll-application/worker
@@ -70,6 +76,9 @@ updates:
       day: monday
     commit-message:
       prefix: chore(deps-docker-worker)
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
 
   # GitHub Actions workflows
   - package-ecosystem: github-actions
