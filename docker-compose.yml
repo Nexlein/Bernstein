@@ -1,0 +1,85 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: bernstein-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./poll-application/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8-alpine
+    container_name: bernstein-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  poll:
+    build:
+      context: ./poll-application/poll
+      dockerfile: Dockerfile
+    container_name: bernstein-poll
+    restart: unless-stopped
+    ports:
+      - '5000:80'
+    environment:
+      REDIS_HOST: redis
+      OPTION_A: Ansible
+      OPTION_B: Chef
+      OPTION_C: Puppet
+      OPTION_D: SaltStack
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./poll-application/worker
+      dockerfile: Dockerfile
+    container_name: bernstein-worker
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  result:
+    build:
+      context: ./poll-application/result
+      dockerfile: Dockerfile
+    container_name: bernstein-result
+    restart: unless-stopped
+    ports:
+      - '5001:80'
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
