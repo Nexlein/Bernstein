@@ -1,0 +1,36 @@
+name: Epitech Mirror
+
+on:
+  workflow_run:
+    workflows: ['CI Pipeline']
+    types: [completed]
+    branches: ['main']
+
+concurrency:
+  group: mirror-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mirror_to_epitech:
+    if: github.repository == 'Nexlein/Bernstein' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Setup SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Push to Epitech Mirror
+        env:
+          EPITECH_REPO_URL: 'git@github.com:EpitechPGE3-2026/G-DOP-500-MPL-5-1-bernstein-2.git'
+        run: |
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git remote add epitech "$EPITECH_REPO_URL"
+          git push epitech HEAD:main --force

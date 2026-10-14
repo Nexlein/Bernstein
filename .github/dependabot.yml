@@ -1,0 +1,84 @@
+version: 2
+updates:
+  # Root dependencies (Husky, Prettier)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  # Result microservice (Express, Socket.IO, pg)
+  - package-ecosystem: npm
+    directory: /poll-application/result
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps-result)
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  # Poll microservice (Flask, redis, gunicorn)
+  - package-ecosystem: pip
+    directory: /poll-application/poll
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps-poll)
+
+  # Worker microservice (Java, Maven, Jedis, Postgres)
+  - package-ecosystem: maven
+    directory: /poll-application/worker
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps-worker)
+
+  # Docker base images for each microservice
+  - package-ecosystem: docker
+    directory: /poll-application/poll
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore(deps-docker-poll)
+
+  - package-ecosystem: docker
+    directory: /poll-application/result
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore(deps-docker-result)
+
+  - package-ecosystem: docker
+    directory: /poll-application/worker
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore(deps-docker-worker)
+
+  # GitHub Actions workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci(deps)
+    groups:
+      actions:
+        patterns: ['*']

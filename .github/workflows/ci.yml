@@ -1,0 +1,111 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format-and-lint:
+    name: Code Style & Config Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install Root Tooling
+        run: npm ci
+
+      - name: Verify Code Formatting
+        run: npm run format:check
+
+      - name: Verify Code Map Freshness
+        run: |
+          node scripts/codemap.mjs
+          git diff --exit-code .claude/codemap.md || (echo "ERROR: .claude/codemap.md is outdated. Run 'npm run codemap' and commit the changes." && exit 1)
+
+      - name: Validate Docker Compose Configuration
+        run: docker compose config --quiet
+
+  build-microservices:
+    name: Build Container Images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: poll
+            context: ./poll-application/poll
+          - service: worker
+            context: ./poll-application/worker
+          - service: result
+            context: ./poll-application/result
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.service }} Container Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          tags: bernstein-${{ matrix.service }}:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  integration-test:
+    name: Full Stack Integration & Probe Verification
+    needs: [format-and-lint, build-microservices]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Start Full Stack with Docker Compose
+        run: docker compose up -d --wait --build
+
+      - name: Verify Poll Health & Readiness Probes
+        run: |
+          echo "Testing Poll /healthz..."
+          curl --fail --retry 5 --retry-delay 2 http://localhost:5000/healthz
+          echo -e "\nTesting Poll /readyz..."
+          curl --fail --retry 5 --retry-delay 2 http://localhost:5000/readyz
+
+      - name: Verify Result Health & Readiness Probes
+        run: |
+          echo "Testing Result /healthz..."
+          curl --fail --retry 5 --retry-delay 2 http://localhost:5001/healthz
+          echo -e "\nTesting Result /readyz..."
+          curl --fail --retry 5 --retry-delay 2 http://localhost:5001/readyz
+
+      - name: Cast Vote and Verify End-to-End Pipeline
+        run: |
+          echo "Submitting vote 'a' to Poll..."
+          curl -f -X POST -d "vote=a" http://localhost:5000/
+          echo "Waiting for Worker to persist the vote..."
+          for i in $(seq 1 15); do
+            VOTES_COUNT=$(docker compose exec -T postgres psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM votes;" | tr -d '[:space:]')
+            [ "$VOTES_COUNT" -ge 1 ] && echo "Vote verified in PostgreSQL!" && exit 0
+            sleep 2
+          done
+          echo "ERROR: Vote was not persisted into PostgreSQL!"
+          docker compose logs worker
+          exit 1
+
+      - name: Cleanup Compose Stack
+        if: always()
+        run: docker compose down -v
