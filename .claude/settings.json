@@ -24,7 +24,6 @@
       "Read(./target/**)",
       "Read(./poll-application/worker/target/**)",
       "Read(./poll-application/result/node_modules/**)",
-      "Read(./doc/subject/bernstein-project.pdf)",
       "Read(./.git/**)",
       "Read(**/*.secret)",
       "Read(**/*kubeconfig*)",
