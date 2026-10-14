@@ -1,0 +1,10 @@
+node_modules/
+package-lock.json
+poll-application/result/package-lock.json
+.husky/_/
+target/
+dist/
+build/
+*.pdf
+*.zip
+.git/

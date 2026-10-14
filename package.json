@@ -1,0 +1,19 @@
+{
+  "name": "bernstein",
+  "version": "1.0.0",
+  "description": "Epitech Tek3 - Bernstein Kubernetes Orchestration Project",
+  "scripts": {
+    "prepare": "husky",
+    "codemap": "node scripts/codemap.mjs",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "lint": "npm run format:check"
+  },
+  "author": "Nexlein",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "prettier": "^3.9.9"
+  }
+}

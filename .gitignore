@@ -1,0 +1,62 @@
+# Secrets & Credentials (NEVER commit secrets or cloud credentials)
+.env
+.env.*
+!.env.example
+*.secret
+secret.yaml
+*secret*.yaml
+!secret.example.yaml
+*.key
+*.pem
+credentials.json
+kubeconfig
+*kubeconfig*
+!*kubeconfig.example*
+
+# Cloud & Terraform state
+.terraform/
+*.tfstate
+*.tfstate.backup
+.azure/
+.aws/
+.gcloud/
+
+# Dependencies & Build artifacts
+node_modules/
+/dist/
+/build/
+target/
+*.class
+*.jar
+*.war
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+/env/
+venv/
+ENV/
+
+# Testing & Reports
+coverage/
+test-results/
+*.log
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Knowledge Graph (generated locally)
+graphify-out/
+
+# Claude Code local settings
+.claude/settings.local.json

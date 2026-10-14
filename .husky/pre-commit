@@ -1,0 +1,3 @@
+# Keep .claude/codemap.md in sync with project files before every commit
+node scripts/codemap.mjs
+git add .claude/codemap.md
