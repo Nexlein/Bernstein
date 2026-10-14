@@ -14,6 +14,6 @@
   "type": "module",
   "devDependencies": {
     "husky": "^9.1.7",
-    "prettier": "^3.9.9"
+    "prettier": "^3.9.10"
   }
 }
