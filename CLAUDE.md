@@ -6,6 +6,9 @@ Epitech Tek3 DevOps project: Build, containerize, and orchestrate a multi-servic
 
 ## Start Here (Token Saver)
 
+@.claude/codemap.md
+@doc/subject/SUBJECT.md
+
 - `.claude/codemap.md`: Generated map of services (image, port, routes, env vars) and the file tree. Read this first before searching or reading source files.
 - `TODO.md`: Full implementation roadmap and checklist from local verification to defense readiness.
 - `doc/subject/SUBJECT.md`: Condensed official subject (what is graded). The rules below are our own baseline, stricter than the subject.
