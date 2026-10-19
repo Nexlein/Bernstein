@@ -21,6 +21,7 @@ redis, postgres: see `docker-compose.yml` (internal only).
 - `.husky/`: pre-commit
 - `doc/`: DECISIONS.md
 - `doc/subject/`: README.md, SUBJECT.md
+- `k8s/`: kustomization.yaml, namespace.yaml
 - `poll-application/`: README.md, schema.sql
 - `poll-application/poll/`: .dockerignore, Dockerfile, app.py, requirements.txt, wsgi.py
 - `poll-application/poll/templates/`: index.html
