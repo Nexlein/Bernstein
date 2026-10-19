@@ -6,11 +6,11 @@ Step-by-step guide to recreate the Bernstein Azure infrastructure from scratch.
 
 ## Created resources
 
-| Resource         | Name                | Details                                    |
-| ---------------- | ------------------- | ------------------------------------------ |
-| Resource group   | `bernstein-rg`      | Region `francecentral`                     |
-| Private registry | `bernsteinacrmaeva` | ACR, `Basic` SKU                           |
-| K8s cluster      | `bernstein-aks`     | 2 nodes `standard_d2als_v7` (2 vCPU, 4 GB) |
+| Resource         | Name                | Details                                                         |
+| ---------------- | ------------------- | --------------------------------------------------------------- |
+| Resource group   | `bernstein-rg`      | Region `francecentral`                                          |
+| Private registry | `bernsteinacrmaeva` | ACR, `Basic` SKU (`francecentral`)                              |
+| K8s cluster      | `bernstein-aks`     | Region `spaincentral`, 2 nodes `standard_b2s_v2` (2 vCPU, 8 GB) |
 
 ---
 
@@ -83,15 +83,23 @@ az acr create --resource-group bernstein-rg --name bernsteinacrmaeva --sku Basic
 ## 5. Create the AKS cluster (~5-10 min)
 
 ```fish
-az aks create --resource-group bernstein-rg --name bernstein-aks --node-count 2 --node-vm-size standard_d2als_v7 --attach-acr bernsteinacrmaeva --no-ssh-key
+az aks create --resource-group bernstein-rg --name bernstein-aks --location spaincentral --node-count 2 --node-vm-size standard_b2s_v2 --attach-acr bernsteinacrmaeva --no-ssh-key
 ```
 
-| Option                    | Why                                                                         |
-| ------------------------- | --------------------------------------------------------------------------- |
-| `--node-count 2`          | Spreads the 2 poll/result replicas across nodes; fits within a 4 vCPU quota |
-| `--node-vm-size d2als_v7` | Smallest size allowed on the student subscription in `francecentral`        |
-| `--attach-acr`            | Grants the cluster pull access to the ACR (no `imagePullSecret` needed)     |
-| `--no-ssh-key`            | No SSH needed on nodes; avoids the `~/.ssh/id_rsa` parsing error            |
+If the cluster already exists, do not rerun `create` with the same name. Either continue with step 6, or inspect/update the existing cluster with:
+
+```fish
+az aks show --resource-group bernstein-rg --name bernstein-aks -o table
+az aks update --resource-group bernstein-rg --name bernstein-aks
+```
+
+| Option                    | Why                                                                                                                    |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `--location spaincentral` | `francecentral` only allows `v7` SKUs on Azure for Students, which have `0` vCPU quota; `spaincentral` allows `Bsv2`   |
+| `--node-count 2`          | Spreads the 2 poll/result replicas across nodes; fits within the 6 regional / 10 family vCPU quota (`2 × 2 = 4` vCPUs) |
+| `--node-vm-size b2s_v2`   | 2 vCPU / 8 GB RAM (`Standard Bsv2 Family` has 10 vCPU quota in `spaincentral` on the student subscription)             |
+| `--attach-acr`            | Grants the cluster pull access to the ACR (no `imagePullSecret` needed)                                                |
+| `--no-ssh-key`            | No SSH needed on nodes; avoids the `~/.ssh/id_rsa` parsing error                                                       |
 
 Track progress:
 
@@ -102,7 +110,7 @@ az aks show -g bernstein-rg -n bernstein-aks --query provisioningState -o tsv   
 ## 6. Connect kubectl to the cluster
 
 ```fish
-az aks get-credentials --resource-group bernstein-rg --name bernstein-aks
+az aks get-credentials --resource-group bernstein-rg --name bernstein-aks --overwrite-existing
 kubectl get nodes          # 2 nodes "Ready"
 kubectl get nodes -w       # live watch (Ctrl+C to quit)
 ```
@@ -187,17 +195,17 @@ az group delete --name bernstein-rg --yes                         # delete EVERY
 
 ## Troubleshooting
 
-| Error                                                             | Cause / Fix                                                                                    |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `az: command not found`                                           | Install aborted by `apt update` → `sudo apt-get update --allow-releaseinfo-change`, then rerun |
-| `Valid PEM but no BEGIN/END delimiters for a private key`         | `--generate-ssh-keys` can't read the existing key → use `--no-ssh-key`                         |
-| `The VM size of Standard_B2s is not allowed in your subscription` | Size not allowed → pick one from the returned list (`standard_d2als_v7`)                       |
-| vCPU quota error                                                  | Student subscription ≈ 4 vCPU/region → `--node-count 1`                                        |
-| `kubectl: command not found`                                      | `sudo snap install kubectl --classic`                                                          |
-| `kubectl get nodes` → `No resources found`                        | Cluster still `Creating`, wait for `Succeeded`                                                 |
+| Error                                                             | Cause / Fix                                                                                                   |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `az: command not found`                                           | Install aborted by `apt update` → `sudo apt-get update --allow-releaseinfo-change`, then rerun                |
+| `Valid PEM but no BEGIN/END delimiters for a private key`         | `--generate-ssh-keys` can't read the existing key → use `--no-ssh-key`                                        |
+| `The VM size of Standard_B2s is not allowed in your subscription` | Size not allowed in region → use `--location spaincentral --node-vm-size standard_b2s_v2`                     |
+| `ErrCode_InsufficientVCPUQuota` (`StandardDalsv7Family` = 0)      | `francecentral` only exposes `v7` SKUs with `0` quota on Student subscriptions → deploy AKS in `spaincentral` |
+| `kubectl: command not found`                                      | `sudo snap install kubectl --classic`                                                                         |
+| `kubectl get nodes` → `No resources found`                        | Cluster still `Creating`, wait for `Succeeded`                                                                |
 
 Check your quota:
 
 ```fish
-az vm list-usage --location francecentral -o table | grep -i "total regional"
+az vm list-usage --location spaincentral -o table | awk '$NF > 0 && /vCPU/'
 ```
