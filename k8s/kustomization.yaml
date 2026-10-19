@@ -1,0 +1,14 @@
+# Entry point: kubectl apply -k k8s/  (preview: kubectl kustomize k8s/)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Every namespaced resource below lands in this namespace.
+namespace: bernstein
+
+# Added to metadata only; selectors are left untouched.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: bernstein
+
+resources:
+  - namespace.yaml
