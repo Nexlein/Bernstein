@@ -6,24 +6,33 @@ Convention: lines marked **Fact** are backed by the linked source. Everything el
 
 Summary:
 
-| Topic         | Choice                                                        |
-| ------------- | ------------------------------------------------------------- |
-| Cloud / K8s   | Azure Kubernetes Service (AKS), Free tier                     |
-| Registry      | Azure Container Registry (ACR), Basic SKU                     |
-| Manifests     | Kustomize (`k8s/`, `kubectl apply -k`)                        |
-| Public access | One `Service` of type `LoadBalancer` each for Poll and Result |
-| Image tags    | Git commit SHA                                                |
+| Topic         | Choice                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------- |
+| Cloud / K8s   | Azure Kubernetes Service (AKS), Free tier (`spaincentral`, 2 × `Standard_B2s_v2` nodes) |
+| Registry      | Azure Container Registry (ACR), Basic SKU (`bernsteinacrmaeva`, `francecentral`)        |
+| Manifests     | Kustomize (`k8s/`, `kubectl apply -k`)                                                  |
+| Public access | One `Service` of type `LoadBalancer` each for Poll and Result                           |
+| Image tags    | Git commit SHA                                                                          |
+
+Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/cluster-setup.md).
 
 ---
 
 ## 1. Cloud / Kubernetes: AKS
 
-**Choice:** AKS, Free tier, small node pool. Stopped when not in use.
+**Choice:** AKS (`bernstein-aks`), Free tier, in `spaincentral`, with **2 `Standard_B2s_v2` nodes** (2 vCPUs, 8 GiB RAM per node; 4 vCPUs, 16 GiB total). Stopped when not in use.
 
 **Pros**
 
 - Epitech students get Azure credits, and the subject points to them. No personal card or extra budget needed.
 - **Fact:** The Free tier has free cluster management; only the consumed resources (nodes, disks, IPs) are billed. It is meant for dev/test and clusters under 10 nodes. ([Microsoft Learn: AKS pricing tiers](https://learn.microsoft.com/en-us/azure/aks/free-standard-pricing-tiers))
+- **Why 2 nodes (`--node-count 2`):**
+  - Minimum node count required to survive a node drain (`kubectl drain`, explicitly listed in the defense topics) or single-VM failure without a service outage.
+  - Allows `poll` and `result` (`replicas: 2`) to spread across two distinct physical VMs via `podAntiAffinity`, and provides scheduling headroom for `maxSurge: 1` during zero-downtime rolling updates.
+- **Why `Standard_B2s_v2` (2 vCPU, 8 GiB RAM) in `spaincentral`:**
+  - **Fact:** `Standard_B2s_v2` provides 2 vCPUs and 8 GiB of memory on burstable B-series hardware, accruing CPU credits when idle and bursting during rollouts. ([Microsoft Learn: Bsv2-series sizes](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/general-purpose/bsv2-series))
+  - 8 GiB RAM per node (16 GiB total) comfortably fits `kube-system` daemons, the JVM-based `worker`, `postgres`, `redis`, and replicated `poll`/`result` pods with `resources.requests` and `resources.limits` enforced.
+  - On Azure for Students subscriptions, `francecentral` only exposes `v7` VM families (`StandardDalsv7Family`) with a `0` vCPU quota, whereas `spaincentral` grants a 10 vCPU quota for `Standard Bsv2` (and 6 regional vCPUs total, within which `2 × 2 = 4` vCPUs fit).
 - **Fact:** A cluster can be stopped with `az aks stop` and started again with `az aks start`. Compute is not billed while stopped and all objects except standalone pods are kept. ([Microsoft Learn: Stop and start an AKS cluster](https://learn.microsoft.com/en-us/azure/aks/start-stop-cluster))
 - Same cloud as the registry, so image pulls need no extra secret (see section 2).
 
@@ -32,9 +41,12 @@ Summary:
 - **Fact:** The Free tier has no financially backed uptime SLA for the API server. ([same source](https://learn.microsoft.com/en-us/azure/aks/free-standard-pricing-tiers)) Acceptable for a school project; the running workloads are not affected by API server hiccups.
 - Ties the delivery to Azure. The subject accepts this: the evaluator uses a cluster "on the same platform".
 - **Fact:** After a stop/start, the API server IP may change. ([same source as stop/start](https://learn.microsoft.com/en-us/azure/aks/start-stop-cluster)) Run `az aks get-credentials` again after a restart.
+- **Fact:** B-series VMs are burstable: they run at a CPU baseline below 100% and only go above it while they have CPU credits left. ([Microsoft Learn: Bsv2-series sizes](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/general-purpose/bsv2-series)) A long load test can drain the credits and throttle the nodes. We watch this during the rollout test (#30).
 
 **Alternatives not taken**
 
+- **1 node (`--node-count 1`):** halves VM cost, but any `kubectl drain` or VM reboot causes 100% downtime because evicted pods have nowhere to reschedule.
+- **3+ nodes:** burns 50%+ more student credits and hits the 6 vCPU regional student quota ceiling (`3 × 2 = 6` vCPUs) with no extra value for our 5 services.
 - **GKE / EKS:** good managed offers, but no Epitech credits. EKS bills the control plane per hour ([AWS: EKS pricing](https://aws.amazon.com/eks/pricing/)).
 - **DigitalOcean (GitHub Student Pack):** simple and cheap, but the credit is limited and a second cloud account is needed by every evaluator.
 - **Self-managed (k3s, kubeadm on VMs, minikube):** we would operate the control plane ourselves, and a local cluster is not reachable from the outside world. The subject "highly recommends" Kubernetes-as-a-Service.
@@ -45,12 +57,12 @@ Summary:
 
 ## 2. Private registry: ACR
 
-**Choice:** ACR, Basic SKU, attached to the AKS cluster.
+**Choice:** ACR (`bernsteinacrmaeva.azurecr.io`), Basic SKU in `francecentral`, attached to the AKS cluster (`--attach-acr`).
 
 **Pros**
 
-- **Fact:** `az aks update --attach-acr <registry>` gives the cluster's kubelet managed identity the `AcrPull` role on the registry. Nodes then pull images with no `imagePullSecret` in the manifests. ([Microsoft Learn: Integrate ACR with AKS](https://learn.microsoft.com/en-us/azure/aks/cluster-container-registry-integration))
-- No registry password lives in the cluster or in git: this fits our secret-separation rule.
+- **Fact:** `az aks update --attach-acr <registry>` (or `az aks create --attach-acr`) gives the cluster's kubelet managed identity the `AcrPull` role on the registry. Nodes then pull images with no `imagePullSecret` in the manifests. ([Microsoft Learn: Integrate ACR with AKS](https://learn.microsoft.com/en-us/azure/aks/cluster-container-registry-integration))
+- No registry password lives in the cluster or in git: this fits our secret-separation rule. Local pushes authenticate via `az login` + `az acr login --name bernsteinacrmaeva` (see [`doc/setup/cluster-setup.md`](setup/cluster-setup.md)).
 - **Fact:** The Basic SKU has the same data-plane API as the other SKUs, 10 GiB of included storage, and no anonymous pull access (Standard and Premium only). So the registry is private by default. ([Microsoft Learn: ACR SKUs](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-skus)) Our 3 images fit easily in 10 GiB.
 
 **Cons**

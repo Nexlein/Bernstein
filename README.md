@@ -114,6 +114,8 @@ Work is tracked as GitHub issues, grouped into 4 epics: [Registry & pipeline](ht
 
 Technical choices (cloud, registry, manifests, public access, image tags), with pros, cons and rejected alternatives: [`doc/DECISIONS.md`](doc/DECISIONS.md).
 
+Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.md`](doc/setup/cluster-setup.md).
+
 ---
 
 ## Project Structure
@@ -130,6 +132,7 @@ Technical choices (cloud, registry, manifests, public access, image tags), with 
 ├── .husky/                   # Version-controlled Git pre-commit hooks
 ├── doc/
 │   ├── DECISIONS.md          # Technical choices, trade-offs and rejected alternatives
+│   ├── setup/                # Step-by-step AKS cluster & ACR registry setup guide
 │   └── subject/              # Official Epitech project PDF & markdown specifications
 ├── poll-application/         # Source code & Dockerfiles for the 3 services
 │   ├── poll/                 # Flask / Python 3.14 voting app

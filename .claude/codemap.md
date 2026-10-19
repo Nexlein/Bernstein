@@ -20,6 +20,7 @@ redis, postgres: see `docker-compose.yml` (internal only).
 - `.github/workflows/`: ci.yml, mirror.yml
 - `.husky/`: pre-commit
 - `doc/`: DECISIONS.md
+- `doc/setup/`: cluster-setup.md
 - `doc/subject/`: README.md, SUBJECT.md
 - `k8s/`: kustomization.yaml, namespace.yaml
 - `poll-application/`: README.md, schema.sql
