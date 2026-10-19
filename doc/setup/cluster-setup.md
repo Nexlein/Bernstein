@@ -168,6 +168,8 @@ kubectl delete pod test-pull
 
 ### (Optional) Push from GitHub CI
 
+> **To be decided in #13 (OIDC preferred).** The service principal below relies on a long-lived password stored in GitHub. OIDC with a federated credential needs no stored secret ([Microsoft Learn: GitHub Actions with OIDC](https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect)). Kept here as a fallback only.
+
 Create a service principal limited to pushing:
 
 ```bash
