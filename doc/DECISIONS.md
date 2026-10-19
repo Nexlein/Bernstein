@@ -13,6 +13,7 @@ Summary:
 | Manifests     | Kustomize (`k8s/`, `kubectl apply -k`)                                                  |
 | Public access | One `Service` of type `LoadBalancer` each for Poll and Result                           |
 | Image tags    | Git commit SHA                                                                          |
+| Secrets       | Kustomize `secretGenerator` from a gitignored `k8s/secrets.env`                         |
 
 Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/cluster-setup.md).
 
@@ -153,3 +154,30 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **`latest`:** no rollout on re-push, no rollback, no traceability.
 - **Semver (`v1.2.3`):** needs a manual release step; useful for a public product, not for our continuous deploys.
 - **Digest only:** safest, but the manifests become hard to read. We may pin digests later as a hardening step.
+
+---
+
+## 6. Secrets: `secretGenerator` from a gitignored file
+
+**Choice:** The evaluator copies `k8s/secrets.env.example` to `k8s/secrets.env` and fills in `POSTGRES_PASSWORD` (and optionally `REDIS_PASSWORD`). A `secretGenerator` in `k8s/kustomization.yaml` turns this file into the `app-secrets` Secret on `kubectl apply -k k8s/`. The real file is gitignored.
+
+**Pros**
+
+- **Fact:** The subject excludes `POSTGRES_PASSWORD` and the cloud credentials from the delivery, but asks us to document how and where to set them. The evaluator must be able to clone, set the credentials and deploy by themselves. ([subject PDF](subject/bernstein-project.pdf)) Here: one file to fill, then the same single deploy command.
+- **Fact:** `secretGenerator` builds a Secret from an env file and appends a content hash to its name, like `configMapGenerator`. ([Kubernetes docs: Managing Secrets using Kustomize](https://kubernetes.io/docs/tasks/configmap-secret/managing-secret-using-kustomize/)) Changing a password therefore rolls the Deployments that use it, with no manual restart.
+- If `secrets.env` is missing, `kubectl apply -k` fails before anything is created. Nothing can be deployed without its secrets.
+- The Secret gets the `bernstein` namespace from the kustomization, so it always lands next to the pods that read it.
+- No registry secret: AKS pulls from ACR through `--attach-acr` (section 2).
+
+**Cons**
+
+- **Fact:** A Secret is only base64-encoded, not encrypted, in its manifest; anyone allowed to read Secrets in the namespace can read the password. ([Kubernetes docs: Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)) Access is limited through Azure RBAC on the cluster.
+- The password lives in a plain file on the evaluator's machine. Acceptable: it never leaves their machine except to the cluster.
+- Every `kubectl kustomize k8s/` needs a `secrets.env`, even for a dry render. A copy of the template is enough for that.
+
+**Alternatives not taken**
+
+- **`secret.example.yaml` applied with `kubectl apply -f`:** two commands that must run in the right order, no rollout on password change, and the manifest had no namespace, so the Secret landed in `default`, out of the pods' reach.
+- **`kubectl create secret generic ... --from-literal`:** one-off and imperative; the password ends up in the shell history and the step is easy to forget.
+- **Sealed Secrets:** lets an encrypted Secret be committed, but the key belongs to the controller of one cluster. An evaluator's fresh cluster could not decrypt ours, and they would need an extra tool.
+- **Azure Key Vault + Secrets Store CSI driver:** the strongest option for production ([Microsoft Learn](https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver)), but it adds a Key Vault, an identity and an add-on for one password. Over-built for this project.
