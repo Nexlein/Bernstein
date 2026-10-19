@@ -2,8 +2,6 @@
 
 Step-by-step guide to recreate the Bernstein Azure infrastructure from scratch.
 
-> Commands are written for **fish** (`set VAR (cmd)`). In bash, use `VAR=$(cmd)` instead.
-
 ## Created resources
 
 | Resource         | Name                | Details                                                         |
@@ -20,13 +18,13 @@ Step-by-step guide to recreate the Bernstein Azure infrastructure from scratch.
 
 If `apt update` fails because a repository changed its `Codename` (e.g. the Epitech PPA):
 
-```fish
+```bash
 sudo apt-get update --allow-releaseinfo-change
 ```
 
 Then:
 
-```fish
+```bash
 curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 az version
 ```
@@ -35,7 +33,7 @@ Alternative without apt: `sudo apt install pipx && pipx install azure-cli && pip
 
 ### Install kubectl
 
-```fish
+```bash
 sudo snap install kubectl --classic
 ```
 
@@ -45,21 +43,21 @@ sudo snap install kubectl --classic
 
 ## 1. Log in to Azure
 
-```fish
+```bash
 az login                     # or: az login --use-device-code
 az account show -o table     # should show "Azure for Students"
 ```
 
 If you have several subscriptions:
 
-```fish
+```bash
 az account list -o table
 az account set --subscription "Azure for Students"
 ```
 
 ## 2. Register resource providers (once per subscription)
 
-```fish
+```bash
 az provider register --namespace Microsoft.ContainerService
 az provider register --namespace Microsoft.ContainerRegistry
 ```
@@ -68,7 +66,7 @@ az provider register --namespace Microsoft.ContainerRegistry
 
 Logical container for all project resources (lets you delete everything at once).
 
-```fish
+```bash
 az group create --name bernstein-rg --location francecentral
 ```
 
@@ -76,19 +74,19 @@ az group create --name bernstein-rg --location francecentral
 
 The name must be globally unique, lowercase letters and digits only.
 
-```fish
+```bash
 az acr create --resource-group bernstein-rg --name bernsteinacrmaeva --sku Basic
 ```
 
 ## 5. Create the AKS cluster (~5-10 min)
 
-```fish
+```bash
 az aks create --resource-group bernstein-rg --name bernstein-aks --location spaincentral --node-count 2 --node-vm-size standard_b2s_v2 --attach-acr bernsteinacrmaeva --no-ssh-key
 ```
 
 If the cluster already exists, do not rerun `create` with the same name. Either continue with step 6, or inspect/update the existing cluster with:
 
-```fish
+```bash
 az aks show --resource-group bernstein-rg --name bernstein-aks -o table
 az aks update --resource-group bernstein-rg --name bernstein-aks
 ```
@@ -103,13 +101,13 @@ az aks update --resource-group bernstein-rg --name bernstein-aks
 
 Track progress:
 
-```fish
+```bash
 az aks show -g bernstein-rg -n bernstein-aks --query provisioningState -o tsv   # Creating -> Succeeded
 ```
 
 ## 6. Connect kubectl to the cluster
 
-```fish
+```bash
 az aks get-credentials --resource-group bernstein-rg --name bernstein-aks --overwrite-existing
 kubectl get nodes          # 2 nodes "Ready"
 kubectl get nodes -w       # live watch (Ctrl+C to quit)
@@ -123,21 +121,21 @@ kubectl get nodes -w       # live watch (Ctrl+C to quit)
 
 `Contributor` role on the resource group (ACR + AKS access):
 
-```fish
-set RG_ID (az group show --name bernstein-rg --query id -o tsv)
-az role assignment create --assignee firstname.lastname@epitech.eu --role Contributor --scope $RG_ID
+```bash
+RG_ID=$(az group show --name bernstein-rg --query id -o tsv)
+az role assignment create --assignee firstname.lastname@epitech.eu --role Contributor --scope "$RG_ID"
 ```
 
 `kubectl` access to the cluster:
 
-```fish
-set AKS_ID (az aks show -g bernstein-rg -n bernstein-aks --query id -o tsv)
-az role assignment create --assignee firstname.lastname@epitech.eu --role "Azure Kubernetes Service Cluster User Role" --scope $AKS_ID
+```bash
+AKS_ID=$(az aks show -g bernstein-rg -n bernstein-aks --query id -o tsv)
+az role assignment create --assignee firstname.lastname@epitech.eu --role "Azure Kubernetes Service Cluster User Role" --scope "$AKS_ID"
 ```
 
 On the teammate's side:
 
-```fish
+```bash
 az login
 az account set --subscription "<owner's subscription>"
 az acr login --name bernsteinacrmaeva
@@ -152,22 +150,22 @@ az aks get-credentials -g bernstein-rg -n bernstein-aks
 
 Tag = short git SHA: a K8s rollout only triggers when the tag changes, and you always know which commit is running.
 
-```fish
+```bash
 az acr login --name bernsteinacrmaeva
-set TAG (git rev-parse --short HEAD)
-set REG bernsteinacrmaeva.azurecr.io
-for svc in poll result worker
-    docker build -t $REG/$svc:$TAG poll-application/$svc
-    docker push $REG/$svc:$TAG
-end
+TAG=$(git rev-parse --short HEAD)
+REG=bernsteinacrmaeva.azurecr.io
+for svc in poll result worker; do
+    docker build -t "$REG/$svc:$TAG" "poll-application/$svc"
+    docker push "$REG/$svc:$TAG"
+done
 az acr repository list --name bernsteinacrmaeva -o table
 az acr repository show-tags --name bernsteinacrmaeva --repository poll -o table
 ```
 
 Verify the cluster can pull from the private ACR (via `--attach-acr`, no `imagePullSecret` needed):
 
-```fish
-kubectl run test-pull --image=$REG/poll:$TAG --restart=Never
+```bash
+kubectl run test-pull --image="$REG/poll:$TAG" --restart=Never
 kubectl get pod test-pull
 kubectl describe pod test-pull | grep -E "Pulling|Pulled|Started"
 kubectl delete pod test-pull
@@ -177,9 +175,9 @@ kubectl delete pod test-pull
 
 Create a service principal limited to pushing:
 
-```fish
-set ACR_ID (az acr show --name bernsteinacrmaeva --query id -o tsv)
-az ad sp create-for-rbac --name bernstein-ci --role AcrPush --scopes $ACR_ID
+```bash
+ACR_ID=$(az acr show --name bernsteinacrmaeva --query id -o tsv)
+az ad sp create-for-rbac --name bernstein-ci --role AcrPush --scopes "$ACR_ID"
 ```
 
 Add in GitHub → Settings → Secrets and variables → Actions:
@@ -194,7 +192,7 @@ Add in GitHub → Settings → Secrets and variables → Actions:
 
 ## 9. Cost management
 
-```fish
+```bash
 az aks stop  --resource-group bernstein-rg --name bernstein-aks   # shut down the nodes
 az aks start --resource-group bernstein-rg --name bernstein-aks   # start them again
 az group delete --name bernstein-rg --yes                         # delete EVERYTHING (end of project)
@@ -215,6 +213,6 @@ az group delete --name bernstein-rg --yes                         # delete EVERY
 
 Check your quota:
 
-```fish
+```bash
 az vm list-usage --location spaincentral -o table | awk '$NF > 0 && /vCPU/'
 ```
