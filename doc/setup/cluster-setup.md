@@ -164,6 +164,15 @@ az acr repository list --name bernsteinacrmaeva -o table
 az acr repository show-tags --name bernsteinacrmaeva --repository poll -o table
 ```
 
+Verify the cluster can pull from the private ACR (via `--attach-acr`, no `imagePullSecret` needed):
+
+```fish
+kubectl run test-pull --image=$REG/poll:$TAG --restart=Never
+kubectl get pod test-pull
+kubectl describe pod test-pull | grep -E "Pulling|Pulled|Started"
+kubectl delete pod test-pull
+```
+
 ### (Optional) Push from GitHub CI
 
 Create a service principal limited to pushing:
