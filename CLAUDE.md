@@ -10,7 +10,8 @@ Epitech Tek3 DevOps project: Build, containerize, and orchestrate a multi-servic
 @doc/subject/SUBJECT.md
 
 - `.claude/codemap.md`: Generated map of services (image, port, routes, env vars) and the file tree. Read this first before searching or reading source files.
-- `TODO.md`: Link to the GitHub issue epics + the Decisions block (cloud, registry, tools). Record decisions there.
+- `doc/DECISIONS.md`: Technical choices (cloud, registry, manifests, public access, tags) with pros, cons and rejected alternatives. Record new decisions there.
+- Work tracking: GitHub issues, grouped into 4 epics (links in `README.md`). Start from the lowest open issue.
 - `doc/subject/SUBJECT.md`: Condensed official subject (what is graded). The rules below are our own baseline, stricter than the subject.
 
 ---
@@ -19,9 +20,9 @@ Epitech Tek3 DevOps project: Build, containerize, and orchestrate a multi-servic
 
 Diagram: `README.md`. Flow: poll -RPUSH-> redis -BLPOP-> worker -UPSERT-> postgres <-SELECT- result.
 
----
 Stack (justifications in `doc/DECISIONS.md`): AKS cluster, ACR private registry (attached to AKS), Kustomize manifests in `k8s/`, images tagged with the git SHA. Public access: one `LoadBalancer` Service each for Poll and Result, no Ingress.
 
+---
 
 ## Services
 

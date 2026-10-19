@@ -108,6 +108,14 @@ docker compose down -v
 
 ---
 
+## Roadmap & Decisions
+
+Work is tracked as GitHub issues, grouped into 4 epics: [Registry & pipeline](https://github.com/Nexlein/Bernstein/issues/43), [K8s manifests](https://github.com/Nexlein/Bernstein/issues/44), [Zero-downtime & resilience](https://github.com/Nexlein/Bernstein/issues/45), [Docs & defense](https://github.com/Nexlein/Bernstein/issues/46). Start from the lowest open issue; dependencies are set as "blocked by".
+
+Technical choices (cloud, registry, manifests, public access, image tags), with pros, cons and rejected alternatives: [`doc/DECISIONS.md`](doc/DECISIONS.md).
+
+---
+
 ## Project Structure
 
 ```
@@ -121,6 +129,7 @@ docker compose down -v
 │       └── mirror.yml        # Automatic mirror to official Epitech repository
 ├── .husky/                   # Version-controlled Git pre-commit hooks
 ├── doc/
+│   ├── DECISIONS.md          # Technical choices, trade-offs and rejected alternatives
 │   └── subject/              # Official Epitech project PDF & markdown specifications
 ├── poll-application/         # Source code & Dockerfiles for the 3 services
 │   ├── poll/                 # Flask / Python 3.14 voting app
@@ -133,7 +142,6 @@ docker compose down -v
 ├── secret.example.yaml       # Template for Kubernetes secrets
 ├── .env.example              # Template for environment variables
 ├── CLAUDE.md                 # Agent instructions, architecture & guardrails
-├── TODO.md                   # Roadmap pointer + technical decisions
 └── package.json              # Development scripts (format, codemap, husky)
 ```
 
