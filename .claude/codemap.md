@@ -15,11 +15,12 @@ redis, postgres: see `docker-compose.yml` (internal only).
 ## Files
 
 - `.claude/`: settings.json
-- `./`: .env.example, .gitignore, .prettierignore, .prettierrc, CLAUDE.md, README.md, TODO.md, docker-compose.yml, package.json, secret.example.yaml
+- `./`: .env.example, .gitignore, .prettierignore, .prettierrc, CLAUDE.md, README.md, docker-compose.yml, package.json, secret.example.yaml
 - `.github/`: dependabot.yml
 - `.github/workflows/`: ci.yml, mirror.yml
 - `.husky/`: pre-commit
-- `doc/setup/`: cluster-decisions.md, cluster-setup.md
+- `doc/`: DECISIONS.md
+- `doc/setup/`: cluster-setup.md
 - `doc/subject/`: README.md, SUBJECT.md
 - `poll-application/`: README.md, schema.sql
 - `poll-application/poll/`: .dockerignore, Dockerfile, app.py, requirements.txt, wsgi.py
