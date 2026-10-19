@@ -24,8 +24,3 @@ configMapGenerator:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
-      # Poll choices: edit and re-apply to change them with a rolling update, no rebuild.
-      - OPTION_A=Ansible
-      - OPTION_B=Chef
-      - OPTION_C=Puppet
-      - OPTION_D=SaltStack
