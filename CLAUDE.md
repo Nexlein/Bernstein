@@ -20,6 +20,8 @@ Epitech Tek3 DevOps project: Build, containerize, and orchestrate a multi-servic
 Diagram: `README.md`. Flow: poll -RPUSH-> redis -BLPOP-> worker -UPSERT-> postgres <-SELECT- result.
 
 ---
+Stack (justifications in `doc/DECISIONS.md`): AKS cluster, ACR private registry (attached to AKS), Kustomize manifests in `k8s/`, images tagged with the git SHA. Public access: one `LoadBalancer` Service each for Poll and Result, no Ingress.
+
 
 ## Services
 
