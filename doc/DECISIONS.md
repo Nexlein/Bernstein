@@ -41,6 +41,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **Fact:** The Free tier has no financially backed uptime SLA for the API server. ([same source](https://learn.microsoft.com/en-us/azure/aks/free-standard-pricing-tiers)) Acceptable for a school project; the running workloads are not affected by API server hiccups.
 - Ties the delivery to Azure. The subject accepts this: the evaluator uses a cluster "on the same platform".
 - **Fact:** After a stop/start, the API server IP may change. ([same source as stop/start](https://learn.microsoft.com/en-us/azure/aks/start-stop-cluster)) Run `az aks get-credentials` again after a restart.
+- **Fact:** B-series VMs are burstable: they run at a CPU baseline below 100% and only go above it while they have CPU credits left. ([Microsoft Learn: Bsv2-series sizes](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/general-purpose/bsv2-series)) A long load test can drain the credits and throttle the nodes. We watch this during the rollout test (#30).
 
 **Alternatives not taken**
 
