@@ -113,6 +113,7 @@ docker compose down -v
 Work is tracked as GitHub issues, grouped into 4 epics: [Registry & pipeline](https://github.com/Nexlein/Bernstein/issues/43), [K8s manifests](https://github.com/Nexlein/Bernstein/issues/44), [Zero-downtime & resilience](https://github.com/Nexlein/Bernstein/issues/45), [Docs & defense](https://github.com/Nexlein/Bernstein/issues/46). Start from the lowest open issue; dependencies are set as "blocked by".
 
 Technical choices (cloud, registry, manifests, public access, image tags), with pros, cons and rejected alternatives: [`doc/DECISIONS.md`](doc/DECISIONS.md).
+
 Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.md`](doc/setup/cluster-setup.md).
 
 ---
