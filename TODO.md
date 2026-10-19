@@ -12,8 +12,8 @@ Local compose stack (smoke-tested), CI, Dependabot, Epitech mirror, non-root ima
 
 Fill in when decided, one line of justification each.
 
-- Cloud / K8s: _AKS suggested (Epitech Azure credits)_
-- Private registry: _ACR suggested_
+- Cloud / K8s: **Azure AKS** (`bernstein-aks` in `spaincentral`, 2 × `Standard_B2s_v2` nodes — 2 vCPU / 8 GiB RAM each) — covered by Epitech Azure credits; 2 nodes is the minimum to survive `kubectl drain` and ensure zero-downtime rollouts within the 6 vCPU regional student quota (see [`doc/setup/cluster-decisions.md`](doc/setup/cluster-decisions.md)).
+- Private registry: **Azure Container Registry** (`bernsteinacrmaeva`, `Basic` SKU in `francecentral`) — attached directly to AKS via managed identity (`--attach-acr`), avoiding static `imagePullSecrets`.
 - Manifests: _Kustomize (`k8s/`) suggested_
 - Public access: _ingress-nginx suggested (one IP, host routing, WebSocket for Result)_
 - Image tags: _git SHA (a rollout only triggers when the tag changes)_
