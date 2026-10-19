@@ -119,19 +119,14 @@ kubectl get nodes -w       # live watch (Ctrl+C to quit)
 
 ## 7. Give access to your teammate
 
-`Contributor` role on the resource group (ACR + AKS access):
+`Contributor` role on the resource group. It covers ACR push/pull and `az aks get-credentials` (`kubectl` access), so no other role is needed:
 
 ```bash
 RG_ID=$(az group show --name bernstein-rg --query id -o tsv)
 az role assignment create --assignee firstname.lastname@epitech.eu --role Contributor --scope "$RG_ID"
 ```
 
-`kubectl` access to the cluster:
-
-```bash
-AKS_ID=$(az aks show -g bernstein-rg -n bernstein-aks --query id -o tsv)
-az role assignment create --assignee firstname.lastname@epitech.eu --role "Azure Kubernetes Service Cluster User Role" --scope "$AKS_ID"
-```
+For `kubectl` access only, without `Contributor`, assign `Azure Kubernetes Service Cluster User Role` on the cluster instead.
 
 On the teammate's side:
 
