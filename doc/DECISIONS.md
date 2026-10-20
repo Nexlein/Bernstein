@@ -196,15 +196,19 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - `ClusterIP` only: the database has no public IP. Only pods in the cluster reach it, through the `postgres` DNS name used in `POSTGRES_HOST`.
 - Non-root (uid 70, `fsGroup: 70` so the disk is writable for that user), with `allowPrivilegeEscalation: false`.
 - Same image as `docker-compose.yml`: what CI tests locally is what runs on the cluster.
+- **Schema:** `schema.sql` is mounted from the `postgres-init` ConfigMap into `/docker-entrypoint-initdb.d`. **Fact:** the image runs the `*.sql` files found there on its first start, when the data directory is empty. ([postgres image docs: Initialization scripts](https://hub.docker.com/_/postgres)) A fresh deploy gets the `votes` table with no manual step, exactly like `docker-compose.yml`. The script uses `CREATE TABLE IF NOT EXISTS`, so running it again cannot fail.
 
 **Cons**
 
 - **Single replica: Postgres is not highly available.** If its node is drained, the pod stops and starts again on the other node (the Azure Disk is detached and re-attached, which takes up to a minute or two). During that time the worker and Result cannot reach the database. Poll keeps accepting votes: they wait in Redis and the worker stores them once Postgres is back. Real replication (a primary plus standbys, e.g. with an operator like CloudNativePG) is a lot of machinery for a demo app.
 - **Fact:** An Azure Disk is `ReadWriteOnce` and zonal: it can only be attached to one node at a time, in its zone. ([Microsoft Learn: Azure Disk CSI driver](https://learn.microsoft.com/en-us/azure/aks/azure-disk-csi)) Fine for one replica; our 2 nodes have no zones (zone `0`), so the pod can move to either node.
 - 1 GiB is enough for the votes table. Azure bills managed disks by size tier, so the smallest tier is billed even if we ask for less.
+- The init script only runs on an empty data directory. A database created before the script was mounted, or a later schema change, is not touched: apply it by hand with `kubectl -n bernstein exec -i postgres-0 -- psql -U postgres -d postgres < k8s/schema.sql`. Acceptable: the schema is one table that does not change, and the evaluator starts from a fresh cluster.
+- Kustomize refuses files outside `k8s/` (even through a symlink), so `k8s/schema.sql` is a copy of `poll-application/schema.sql`. A CI step fails if the two differ.
 
 **Alternatives not taken**
 
 - **Deployment + a standalone PVC:** works for one replica, but a rolling update could start a second pod that tries to mount the same `ReadWriteOnce` disk and gets stuck. A StatefulSet stops the old pod before starting the new one.
 - **Azure Database for PostgreSQL (managed):** backups and HA out of the box, but it costs credits all the time (it cannot be stopped as easily as the cluster), and the evaluator would need to create one too. The subject asks us to deploy the app on the cluster.
 - **`emptyDir` or no volume:** every pod restart would wipe the votes.
+- **Schema through a `Job`, a `postStart` hook or an `initContainer` in worker/result:** each would re-apply the schema on every deploy or start, which also covers existing databases. But each adds a moving part (a Job is immutable and must be renamed to run again; a failing `postStart` kills the container; an `initContainer` ties the apps to the schema) for a one-table schema that never changes.
