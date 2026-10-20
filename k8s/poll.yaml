@@ -1,0 +1,85 @@
+# Poll: Flask / Gunicorn voting front end pushing votes to the Redis queue.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poll
+  labels:
+    app.kubernetes.io/name: poll
+spec:
+  replicas: 2
+  # Zero-downtime rollout: start one new pod, wait until it is Ready for 5 s, then stop an old one.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  minReadySeconds: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: poll
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: poll
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        sysctls:
+          # Lets the non-root user (uid 10001 in the image) listen on port 80.
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: '0'
+      containers:
+        - name: poll
+          # Registry and tag are set by the `images` field of kustomization.yaml.
+          image: poll
+          ports:
+            - name: http
+              containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: HOME
+              value: /tmp
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: REDIS_PASSWORD
+                  optional: true
+          # Liveness: the process answers. Readiness: it also reaches Redis.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            # Gunicorn creates a worker heartbeat file (wgunicorn-*) in /tmp at startup.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
