@@ -15,6 +15,7 @@ Summary:
 | Image tags    | Git commit SHA                                                                          |
 | Secrets       | Kustomize `secretGenerator` from a gitignored `k8s/secrets.env`                         |
 | Database      | PostgreSQL `StatefulSet` (1 replica) on an Azure Disk PVC, `ClusterIP` Service          |
+| Result        | `Deployment`, 2 fixed replicas, no HPA, non-root with a read-only root filesystem       |
 
 Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/cluster-setup.md).
 
@@ -212,3 +213,31 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **Azure Database for PostgreSQL (managed):** backups and HA out of the box, but it costs credits all the time (it cannot be stopped as easily as the cluster), and the evaluator would need to create one too. The subject asks us to deploy the app on the cluster.
 - **`emptyDir` or no volume:** every pod restart would wipe the votes.
 - **Schema through a `Job`, a `postStart` hook or an `initContainer` in worker/result:** each would re-apply the schema on every deploy or start, which also covers existing databases. But each adds a moving part (a Job is immutable and must be renamed to run again; a failing `postStart` kills the container; an `initContainer` ties the apps to the schema) for a one-table schema that never changes.
+
+---
+
+## 8. Result: 2 fixed replicas, hardened container
+
+**Choice:** `k8s/result.yaml` is a `Deployment` with 2 replicas and the rollout settings of our baseline (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Liveness probes `/healthz`, readiness probes `/readyz`. The container runs as uid 1000 with a read-only root filesystem and no Linux capabilities. Its image is written as the bare name `result`; the `images` field of `kustomization.yaml` sets the registry and the tag.
+
+**Pros**
+
+- **2 replicas:** the `Service` spreads users over both, and a rollout or a drained node always leaves one pod serving.
+- **Fact:** with `maxUnavailable: 0`, the Deployment never goes below the desired number of available pods during a rollout; `maxSurge: 1` adds the new pod first. `minReadySeconds` makes a new pod count as available only after it stayed Ready that long. ([Kubernetes docs: Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#rolling-update-deployment))
+- **Probes match the app:** `/healthz` only says the process is alive, so a database outage does not make Kubernetes restart Result in a loop. `/readyz` checks PostgreSQL with `SELECT 1`: a pod that lost the database stops getting traffic until it is back.
+- **No HPA on Result, on purpose:** each pod runs one `SELECT ... GROUP BY` per second and broadcasts it to its WebSocket clients, so its load barely grows with viewers. WebSocket connections stay on the pod they opened on, so a pod added by an HPA would only get new visitors. Poll gets the HPA instead (#33).
+- **Port 80 as non-root:** **Fact:** `net.ipv4.ip_unprivileged_port_start` is a "safe" sysctl, allowed by default since Kubernetes 1.22, and setting it to `0` lets any user bind ports below 1024 inside the pod's network namespace. ([Kubernetes docs: sysctls](https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/#safe-and-unsafe-sysctls)) Some container runtimes already do this, but declaring it makes the pod work the same on any cluster.
+- **Hardening:** no privilege escalation, all capabilities dropped, read-only root filesystem. Result writes nothing to disk, so a compromised process cannot drop files in the container.
+- **Image through `images`:** CI only rewrites `newTag` (the git SHA, section 5). An evaluator with their own registry only changes `newName`. No manifest edit.
+
+**Cons**
+
+- If PostgreSQL is down, both pods fail readiness and leave the Service: the Result page is unreachable instead of showing stale counts. Acceptable: without the database it has nothing to show, and Poll keeps working.
+- Open WebSocket connections are cut when their pod stops during a rollout. The browser reconnects by itself (socket.io), and the client only uses the WebSocket transport, so no sticky sessions are needed.
+- `envFrom: app-config` also injects `REDIS_HOST`, which Result does not use. Harmless, and simpler than listing each key.
+
+**Alternatives not taken**
+
+- **1 replica:** any rollout or node drain would cut the page.
+- **HPA:** see above.
+- **Readiness on `/healthz` too:** pods would keep getting traffic while they cannot answer with data.
