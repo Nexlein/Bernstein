@@ -13,6 +13,7 @@ labels:
 resources:
   - namespace.yaml
   - postgres.yaml
+  - redis.yaml
   - result.yaml
 
 # Real registry and tag of the app images (manifests use the bare name).
