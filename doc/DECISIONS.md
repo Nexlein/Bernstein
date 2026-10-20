@@ -16,6 +16,9 @@ Summary:
 | Secrets       | Kustomize `secretGenerator` from a gitignored `k8s/secrets.env`                         |
 | Database      | PostgreSQL `StatefulSet` (1 replica) on an Azure Disk PVC, `ClusterIP` Service          |
 | Result        | `Deployment`, 2 fixed replicas, no HPA, non-root with a read-only root filesystem       |
+| Queue         | Redis `Deployment` (1 replica), in-memory only, `ClusterIP` Service                     |
+| Worker        | `Deployment` (1 replica), no Service, probes check Redis and PostgreSQL                 |
+| Poll          | `Deployment`, 2 replicas, read-only root filesystem with an in-memory `/tmp`            |
 
 Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/cluster-setup.md).
 
