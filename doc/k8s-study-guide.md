@@ -23,30 +23,32 @@ Avancement :
 
 ## 0. Vocabulaire
 
-| Terme           | En une phrase                                                                                                     | Chez nous                                        |
-| --------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| **Cluster**     | L'ensemble des machines pilotées par Kubernetes.                                                                  | `bernstein-aks` (AKS)                            |
-| **Nœud** (node) | Une machine (VM) du cluster, qui fait tourner des pods.                                                           | 2 VM `Standard_B2s_v2`                           |
-| **Pod**         | La plus petite unité lancée : un ou plusieurs conteneurs qui partagent une IP. Jetable : remplacé, jamais réparé. | 7 pods                                           |
-| **Contrôleur**  | Objet qui crée et surveille des pods pour atteindre un état désiré (boucle de réconciliation).                    | Deployment, StatefulSet                          |
-| **Deployment**  | Contrôleur pour des pods interchangeables, sans données propres. Gère les rolling updates.                        | poll, result, worker, redis                      |
-| **ReplicaSet**  | Créé par un Deployment, un par version du template. C'est lui qui maintient le nombre de pods.                    | 1 par version de chaque Deployment               |
-| **StatefulSet** | Contrôleur pour des pods avec identité stable (`postgres-0`) et disque propre.                                    | postgres                                         |
-| **Service**     | Adresse stable (nom DNS + IP virtuelle) qui répartit le trafic entre les pods qui portent un label.               | `postgres`, `redis` (bientôt `poll` et `result`) |
-| **ConfigMap**   | Réglages non secrets (clé/valeur ou fichiers), lus par les pods.                                                  | `app-config`, `postgres-init`                    |
-| **Secret**      | Comme un ConfigMap, pour les mots de passe. Encodé en base64, **pas chiffré**.                                    | `app-secrets`                                    |
-| **PVC**         | PersistentVolumeClaim : une demande de disque (« je veux 1 Gi »).                                                 | `data-postgres-0`                                |
-| **PV**          | PersistentVolume : le disque réel qui répond à la demande (ici un disque Azure créé automatiquement).             | 1 disque Azure de 1 Gi                           |
-| **Namespace**   | Un espace isolé dans le cluster, comme un dossier pour les objets.                                                | `bernstein`                                      |
-| **Probe**       | Test de santé lancé régulièrement par le kubelet : liveness (redémarrer ?), readiness (envoyer du trafic ?).      | `/healthz`, `/readyz`, `pg_isready`, `redis-cli` |
-| **kubelet**     | L'agent Kubernetes sur chaque nœud : lance les conteneurs et exécute les probes.                                  | 1 par nœud, géré par AKS                         |
-| **Kustomize**   | Outil intégré à `kubectl` qui assemble les YAML et leur applique des transformations.                             | `k8s/kustomization.yaml`                         |
+| Terme                                   | En une phrase                                                                                                                 | Chez nous                                                    |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| **Cluster**                             | L'ensemble des machines pilotées par Kubernetes.                                                                              | `bernstein-aks` (AKS)                                        |
+| **Nœud** (node)                         | Une machine (VM) du cluster, qui fait tourner des pods.                                                                       | 2 VM `Standard_B2s_v2`                                       |
+| **Pod**                                 | La plus petite unité lancée : un ou plusieurs conteneurs qui partagent une IP. Jetable : remplacé, jamais réparé.             | 7 pods                                                       |
+| **Contrôleur**                          | Objet qui crée et surveille des pods pour atteindre un état désiré (boucle de réconciliation).                                | Deployment, StatefulSet                                      |
+| **Deployment**                          | Contrôleur pour des pods interchangeables, sans données propres. Gère les rolling updates.                                    | poll, result, worker, redis                                  |
+| **ReplicaSet**                          | Créé par un Deployment, un par version du template. C'est lui qui maintient le nombre de pods.                                | 1 par version de chaque Deployment                           |
+| **StatefulSet**                         | Contrôleur pour des pods avec identité stable (`postgres-0`) et disque propre.                                                | postgres                                                     |
+| **Service**                             | Adresse stable (nom DNS + IP virtuelle) qui répartit le trafic entre les pods qui portent un label.                           | `postgres`, `redis` (internes), `poll`, `result` (publics)   |
+| **ConfigMap**                           | Réglages non secrets (clé/valeur ou fichiers), lus par les pods.                                                              | `app-config`, `postgres-init`                                |
+| **Secret**                              | Comme un ConfigMap, pour les mots de passe. Encodé en base64, **pas chiffré**.                                                | `app-secrets`                                                |
+| **PVC**                                 | PersistentVolumeClaim : une demande de disque (« je veux 1 Gi »).                                                             | `data-postgres-0`                                            |
+| **PV**                                  | PersistentVolume : le disque réel qui répond à la demande (ici un disque Azure créé automatiquement).                         | 1 disque Azure de 1 Gi                                       |
+| **Namespace**                           | Un espace isolé dans le cluster, comme un dossier pour les objets.                                                            | `bernstein`                                                  |
+| **Probe**                               | Test de santé lancé régulièrement par le kubelet : liveness (redémarrer ?), readiness (envoyer du trafic ?).                  | `/healthz`, `/readyz`, `pg_isready`, `redis-cli`             |
+| **kubelet**                             | L'agent Kubernetes sur chaque nœud : lance les conteneurs et exécute les probes.                                              | 1 par nœud, géré par AKS                                     |
+| **ClusterIP / NodePort / LoadBalancer** | Les 3 types de Service, emboîtés : adresse interne ; + un port sur chaque nœud ; + une IP publique du cloud devant les nœuds. | `ClusterIP` : postgres, redis. `LoadBalancer` : poll, result |
+| **kube-proxy**                          | Composant sur chaque nœud qui programme le réseau : il envoie le trafic d'un Service vers l'un de ses pods ready.             | 1 par nœud, géré par AKS                                     |
+| **Kustomize**                           | Outil intégré à `kubectl` qui assemble les YAML et leur applique des transformations.                                         | `k8s/kustomization.yaml`                                     |
 
 ---
 
 ## 1. Ce qui est créé dans le cluster
 
-### Ce qu'on écrit (11 objets)
+### Ce qu'on écrit (13 objets)
 
 `kubectl kustomize k8s/` produit exactement ces objets :
 
@@ -58,6 +60,8 @@ Avancement :
 | Secret      | `app-secrets-<hash>`   | `kustomization.yaml` | Les mots de passe (`secrets.env`)         |
 | Service     | `postgres`             | `postgres.yaml`      | Adresse interne de la base                |
 | Service     | `redis`                | `redis.yaml`         | Adresse interne de la file                |
+| Service     | `poll`                 | `poll.yaml`          | **IP publique** de la page de vote        |
+| Service     | `result`               | `result.yaml`        | **IP publique** de la page des résultats  |
 | StatefulSet | `postgres`             | `postgres.yaml`      | La base, avec son disque                  |
 | Deployment  | `redis`                | `redis.yaml`         | La file de votes                          |
 | Deployment  | `worker`               | `worker.yaml`        | Redis → Postgres                          |
@@ -75,7 +79,8 @@ Deployment worker ─► ReplicaSet worker-<…>        ──► Pod worker-<�
 Deployment redis ──► ReplicaSet redis-<…>         ──► Pod redis-<…>         (×1)
 StatefulSet postgres ──────────────────────────────► Pod postgres-0          (×1)
                      └─► PVC data-postgres-0 ──► PV pvc-<uuid> ──► disque Azure 1 Gi
-Service postgres / redis ──► EndpointSlice (la liste des IP des pods « ready »)
+Service postgres / redis / poll / result ──► EndpointSlice (la liste des IP des pods « ready »)
+Service poll / result (LoadBalancer) ──► dans Azure : 1 IP publique + 1 règle sur le load balancer du cluster
 ```
 
 Total : **7 pods** (2 poll, 2 result, 1 worker, 1 redis, 1 postgres).
@@ -93,6 +98,7 @@ Kubernetes n'a **pas** d'ordre de démarrage : tout est créé en même temps. �
 
 - _« Combien de pods tournent, et qui les a créés ? »_ 7. On n'en a écrit aucun : ce sont les Deployments (via leurs ReplicaSets) et le StatefulSet qui les créent.
 - _« Comment Poll trouve-t-il Redis ? »_ Par le nom DNS `redis`, celui du Service, dans le même namespace. La valeur vient de `REDIS_HOST=redis` dans `app-config`.
+- _« Comment l'évaluateur accède-t-il aux pages ? »_ Par les 2 IP publiques des Services `poll` et `result`, visibles dans la colonne `EXTERNAL-IP` de `kubectl -n bernstein get svc`.
 - _« Qui crée le disque de Postgres ? »_ Le StatefulSet crée la PVC à partir de `volumeClaimTemplates`, puis AKS crée un disque Azure pour la satisfaire (provisionnement dynamique, classe `default`).
 
 ---
@@ -749,6 +755,63 @@ securityContext:
 
 Même structure que le worker (partie 6). Seules les **différences** sont détaillées ici.
 
+### Le Service public (LoadBalancer)
+
+En tête du fichier, avant le Deployment, séparé par `---` :
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: poll
+  labels:
+    app.kubernetes.io/name: poll
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: poll
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
+C'est la même structure que les Services de Postgres et Redis (partie 4). La seule différence est **`type: LoadBalancer`**.
+
+**Les 3 types de Service s'emboîtent** :
+
+```
+LoadBalancer  =  NodePort  +  une IP publique (Azure) devant les nœuds
+NodePort      =  ClusterIP +  un port ouvert sur chaque nœud (30000-32767)
+ClusterIP     =  une adresse interne stable (nom DNS + IP virtuelle)
+```
+
+Un Service `LoadBalancer` a donc **aussi** une adresse interne (`poll`, `10.0.223.71`) et un port sur chaque nœud (le `30829` dans `80:30829/TCP`). C'est pour ça qu'un seul objet a fermé 3 tickets (#24 adresse stable, #25 Poll public, #26 Result public).
+
+**Ce qui se passe à la création** :
+
+1. Kubernetes donne au Service une IP interne, puis ouvre un port sur chaque nœud.
+2. Le composant Azure d'AKS (cloud controller manager) voit `type: LoadBalancer`. Il réserve une **IP publique**, ajoute une **règle** « IP publique:80 → nœuds:30829 » sur le load balancer Azure du cluster, et une **sonde de santé** sur les nœuds.
+3. Il écrit l'IP dans le Service : `EXTERNAL-IP` passe de `<pending>` à l'adresse publique (environ 20 s, mesuré).
+
+**Le trajet d'une requête** :
+
+```
+navigateur ── http://<IP publique>:80
+   ▼
+Load Balancer Azure            ← hors du cluster, choisit un des 2 nœuds
+   ▼
+nœud A ou B, port 30829        ← NodePort
+   ▼
+kube-proxy                     ← choisit un pod Poll ready, peut-être sur l'autre nœud
+   ▼
+pod poll, port 80 → Gunicorn → Flask
+```
+
+Le load balancing se fait donc **à 2 niveaux** : Azure répartit entre les **nœuds**, kube-proxy répartit entre les **pods**.
+
+**`externalTrafficPolicy`** : non écrit, donc à sa valeur par défaut, `Cluster`. Chaque nœud accepte le trafic, même s'il n'a pas de pod Poll, et kube-proxy le fait suivre (1 saut de plus possible). L'app voit l'IP d'un nœud, pas celle du visiteur. L'autre valeur, `Local`, garde l'IP du visiteur, mais n'envoie qu'aux nœuds qui ont un pod ready. Pendant une mise à jour, Azure continuerait alors d'envoyer vers un nœud dont les pods partent, jusqu'à ce que sa sonde s'en rende compte. Nos apps n'utilisent pas l'IP du visiteur : `Cluster` est plus sûr (DECISIONS §4).
+
 ### 2 replicas
 
 ```yaml
@@ -805,6 +868,8 @@ Résultat : tout le système de fichiers est en lecture seule, **sauf** `/tmp`, 
 
 ### Questions probables
 
+- _« Qui fait le load balancing ? »_ Deux niveaux : le load balancer Azure entre les nœuds, puis kube-proxy entre les pods ready du Service.
+- _« Pourquoi pas d'Ingress ? »_ 2 IP publiques répondent directement au sujet, sans composant à installer. ingress-nginx n'est plus maintenu (DECISIONS §4).
 - _« Comment savoir quel pod a répondu ? »_ La page affiche `Processed by container ID <nom du pod>`. Une boucle `curl` montre l'alternance entre les 2 pods. Un F5 dans le navigateur peut retomber sur le même pod, car la connexion reste ouverte (keep-alive).
 - _« Pourquoi un HPA sur Poll et pas sur Result ? »_ Chaque vote est une requête courte : plus de pods, c'est plus de capacité. Result, lui, garde des WebSockets ouverts (#33, DECISIONS §8).
 - _« Pourquoi `/tmp` en mémoire ? »_ Pour garder le système de fichiers en lecture seule tout en laissant Gunicorn écrire ses fichiers, sans dépendre de la vitesse du disque.
@@ -814,6 +879,14 @@ Résultat : tout le système de fichiers est en lecture seule, **sauf** `/tmp`, 
 ## 8. `k8s/result.yaml`, ligne par ligne
 
 Même structure que Poll : **2 replicas**, la même stratégie, la sysctl pour le port 80 et le système de fichiers en lecture seule. Différences :
+
+### Le Service public (LoadBalancer)
+
+Même bloc que Poll (partie 7), avec `name: result` et le selector `app.kubernetes.io/name: result`. Azure lui donne une **deuxième IP publique**.
+
+Le load balancer Azure travaille en **couche 4** (TCP) : il fait suivre les connexions telles quelles, sans lire le HTTP. La WebSocket de Result passe donc sans aucun réglage. Vérifié depuis Internet : la requête d'ouverture répond `101 Switching Protocols`, et dans un navigateur, un vote sur Poll fait bouger les scores sans recharger la page.
+
+Un vote peut atteindre un pod Poll et ses scores s'afficher via n'importe quel pod Result : chaque pod Result relit lui-même Postgres chaque seconde.
 
 ### Uniquement Postgres
 
@@ -865,7 +938,7 @@ Result gère aussi `SIGTERM` proprement : il arrête d'accepter des connexions, 
 
 ## 9. Scénarios : ce qui se passe quand…
 
-Pour chaque scénario : ce que fait Kubernetes, ce que voit l'utilisateur, et ce qui reste à améliorer (avec le ticket). État décrit : `main` actuel. **Pas encore de Service public** pour Poll et Result (#24 à #26).
+Pour chaque scénario : ce que fait Kubernetes, ce que voit l'utilisateur, et ce qui reste à améliorer (avec le ticket). État décrit : `main` actuel, avec Poll et Result exposés par des Services `LoadBalancer` (#24 à #26).
 
 ### 9.1 Premier déploiement sur un cluster neuf
 
@@ -875,11 +948,16 @@ kubectl apply -k k8s/
 kubectl -n bernstein get pods -w             # suivre le démarrage (Ctrl+C pour quitter)
 ```
 
-1. Kustomize construit les 11 objets (partie 1). Sans `secrets.env`, il s'arrête là.
+1. Kustomize construit les 13 objets (partie 1). Sans `secrets.env`, il s'arrête là.
 2. Tout est créé **en même temps** : aucun ordre garanti.
 3. Postgres attend son disque (quelques dizaines de secondes), puis initialise la base et la table `votes`.
 4. Pendant ce temps, le worker affiche `Waiting for db` et Result réessaie : leur readiness est rouge.
 5. Dès que Postgres et Redis répondent, tout passe au vert : `7/7` pods `Running` et `1/1` ou `2/2` ready.
+6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur :
+
+```bash
+kubectl -n bernstein get svc poll result   # colonne EXTERNAL-IP
+```
 
 ### 9.2 Mise à jour d'une image (le test « on change le code »)
 
@@ -976,6 +1054,7 @@ kubectl -n bernstein scale deploy/poll --replicas=4
 - `start` : les nœuds sont **nouveaux** (noms différents), et tous les pods sont recréés. Postgres retrouve son disque et ses votes.
 - L'adresse du serveur API peut changer : il faut refaire `az aks get-credentials`.
 - Le disque Azure reste facturé même cluster arrêté (quelques centimes par mois pour 1 Gi).
+- Les Services `poll` et `result` existent toujours. Leurs IP publiques devraient être conservées : **à vérifier** au prochain `start` avec `kubectl -n bernstein get svc`. Azure les range dans le groupe de ressources du cluster (`MC_…`), où nos comptes n'ont pas le droit de lecture.
 
 ### 9.9 Tout supprimer
 
@@ -983,21 +1062,22 @@ kubectl -n bernstein scale deploy/poll --replicas=4
 kubectl delete -k k8s/
 ```
 
-Supprime le namespace, donc **tout**, y compris la PVC. La classe de stockage `default` a `reclaimPolicy: Delete` : le disque Azure est supprimé, et **les votes sont perdus**. Pour garder les données, il faut supprimer les objets un par un, sans la PVC.
+Supprime le namespace, donc **tout**, y compris la PVC. La classe de stockage `default` a `reclaimPolicy: Delete` : le disque Azure est supprimé, et **les votes sont perdus**. Pour garder les données, il faut supprimer les objets un par un, sans la PVC. Les 2 IP publiques sont aussi libérées : un nouveau déploiement en recevra d'autres.
 
 ### 9.10 Commandes utiles pendant la soutenance
 
-| Besoin                                     | Commande                                                                      |
-| ------------------------------------------ | ----------------------------------------------------------------------------- |
-| Voir tous nos objets                       | `kubectl -n bernstein get all`                                                |
-| Voir sur quel nœud tourne chaque pod       | `kubectl -n bernstein get pods -o wide`                                       |
-| Pourquoi un pod ne démarre pas             | `kubectl -n bernstein describe pod <pod>` (section `Events`)                  |
-| Logs d'un pod (et du précédent)            | `kubectl -n bernstein logs <pod>` / `--previous`                              |
-| Suivre un rollout                          | `kubectl -n bernstein rollout status deploy/poll`                             |
-| Historique et retour arrière               | `kubectl -n bernstein rollout history deploy/poll` / `rollout undo …`         |
-| Relancer les pods sans changer l'image     | `kubectl -n bernstein rollout restart deploy/poll`                            |
-| Vers quels pods pointe un Service          | `kubectl -n bernstein get endpointslices -l kubernetes.io/service-name=redis` |
-| Voir le rendu sans rien appliquer          | `kubectl kustomize k8s/`                                                      |
-| Comparer avec ce qui tourne                | `kubectl diff -k k8s/`                                                        |
-| Consommation CPU et mémoire                | `kubectl -n bernstein top pods`                                               |
-| Ouvrir une app en local (sans IP publique) | `kubectl -n bernstein port-forward deploy/poll 8080:80`                       |
+| Besoin                                      | Commande                                                                      |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
+| Voir tous nos objets                        | `kubectl -n bernstein get all`                                                |
+| Les IP publiques de Poll et Result          | `kubectl -n bernstein get svc poll result`                                    |
+| Voir sur quel nœud tourne chaque pod        | `kubectl -n bernstein get pods -o wide`                                       |
+| Pourquoi un pod ne démarre pas              | `kubectl -n bernstein describe pod <pod>` (section `Events`)                  |
+| Logs d'un pod (et du précédent)             | `kubectl -n bernstein logs <pod>` / `--previous`                              |
+| Suivre un rollout                           | `kubectl -n bernstein rollout status deploy/poll`                             |
+| Historique et retour arrière                | `kubectl -n bernstein rollout history deploy/poll` / `rollout undo …`         |
+| Relancer les pods sans changer l'image      | `kubectl -n bernstein rollout restart deploy/poll`                            |
+| Vers quels pods pointe un Service           | `kubectl -n bernstein get endpointslices -l kubernetes.io/service-name=redis` |
+| Voir le rendu sans rien appliquer           | `kubectl kustomize k8s/`                                                      |
+| Comparer avec ce qui tourne                 | `kubectl diff -k k8s/`                                                        |
+| Consommation CPU et mémoire                 | `kubectl -n bernstein top pods`                                               |
+| Tester un pod sans passer par l'IP publique | `kubectl -n bernstein port-forward deploy/poll 8080:80`                       |
