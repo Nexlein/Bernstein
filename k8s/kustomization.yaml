@@ -12,3 +12,15 @@ labels:
 
 resources:
   - namespace.yaml
+
+# Non-secret settings shared by poll, worker, result and postgres.
+# Kustomize appends a content hash to the name and rewrites references,
+# so changing a value rolls the Deployments that use it.
+configMapGenerator:
+  - name: app-config
+    literals:
+      - REDIS_HOST=redis
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
