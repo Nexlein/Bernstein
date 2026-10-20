@@ -120,6 +120,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 
 - Two public IPs instead of one. Each Standard public IP is billed per hour ([Azure: IP address pricing](https://azure.microsoft.com/pricing/details/ip-addresses/)). Small compared to the nodes.
 - No host/path routing and no TLS termination. Not required by the subject.
+- We keep the default `externalTrafficPolicy: Cluster`: every node accepts the traffic and kube-proxy forwards it to a ready pod, possibly on the other node (one extra hop), and the app sees a node IP instead of the visitor's IP. **Fact:** `Local` keeps the client IP but only sends traffic to nodes that run a ready pod of the Service. ([Kubernetes docs: Preserving the client source IP](https://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/#preserving-the-client-source-ip)) With `Local`, a node whose pods are being replaced keeps receiving traffic until the Azure health probe notices, a risk during rollouts that buys us nothing: the apps do not use the client IP.
 - Zero downtime still depends on us: during a rollout, a terminating pod can receive traffic until its endpoint is removed everywhere. We handle this with readiness probes, a `preStop` sleep and `maxUnavailable: 0` (issues #27, #28). **Fact:** endpoint removal and the `SIGTERM` happen in parallel. ([Kubernetes docs: Pod termination](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination))
 
 **Alternatives not taken**

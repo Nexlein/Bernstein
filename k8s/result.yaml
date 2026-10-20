@@ -1,4 +1,21 @@
 # Result: Node.js front end showing the vote counts, read from PostgreSQL.
+# Public entry point: Azure gives this Service its own public IP (EXTERNAL-IP).
+# Layer 4 (TCP) load balancing, so the WebSocket used for live scores passes through as is.
+apiVersion: v1
+kind: Service
+metadata:
+  name: result
+  labels:
+    app.kubernetes.io/name: result
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: result
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
