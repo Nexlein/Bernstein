@@ -15,6 +15,7 @@ Summary:
 | Image tags    | Git commit SHA                                                                          |
 | Secrets       | Kustomize `secretGenerator` from a gitignored `k8s/secrets.env`                         |
 | Database      | PostgreSQL `StatefulSet` (1 replica) on an Azure Disk PVC, `ClusterIP` Service          |
+| Result        | `Deployment`, 2 fixed replicas, no HPA, non-root with a read-only root filesystem       |
 
 Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/cluster-setup.md).
 
@@ -196,15 +197,47 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - `ClusterIP` only: the database has no public IP. Only pods in the cluster reach it, through the `postgres` DNS name used in `POSTGRES_HOST`.
 - Non-root (uid 70, `fsGroup: 70` so the disk is writable for that user), with `allowPrivilegeEscalation: false`.
 - Same image as `docker-compose.yml`: what CI tests locally is what runs on the cluster.
+- **Schema:** `schema.sql` is mounted from the `postgres-init` ConfigMap into `/docker-entrypoint-initdb.d`. **Fact:** the image runs the `*.sql` files found there on its first start, when the data directory is empty. ([postgres image docs: Initialization scripts](https://hub.docker.com/_/postgres)) A fresh deploy gets the `votes` table with no manual step, exactly like `docker-compose.yml`. The script uses `CREATE TABLE IF NOT EXISTS`, so running it again cannot fail.
 
 **Cons**
 
 - **Single replica: Postgres is not highly available.** If its node is drained, the pod stops and starts again on the other node (the Azure Disk is detached and re-attached, which takes up to a minute or two). During that time the worker and Result cannot reach the database. Poll keeps accepting votes: they wait in Redis and the worker stores them once Postgres is back. Real replication (a primary plus standbys, e.g. with an operator like CloudNativePG) is a lot of machinery for a demo app.
 - **Fact:** An Azure Disk is `ReadWriteOnce` and zonal: it can only be attached to one node at a time, in its zone. ([Microsoft Learn: Azure Disk CSI driver](https://learn.microsoft.com/en-us/azure/aks/azure-disk-csi)) Fine for one replica; our 2 nodes have no zones (zone `0`), so the pod can move to either node.
 - 1 GiB is enough for the votes table. Azure bills managed disks by size tier, so the smallest tier is billed even if we ask for less.
+- The init script only runs on an empty data directory. A database created before the script was mounted, or a later schema change, is not touched: apply it by hand with `kubectl -n bernstein exec -i postgres-0 -- psql -U postgres -d postgres < k8s/schema.sql`. Acceptable: the schema is one table that does not change, and the evaluator starts from a fresh cluster.
+- Kustomize refuses files outside `k8s/` (even through a symlink), so `k8s/schema.sql` is a copy of `poll-application/schema.sql`. A CI step fails if the two differ.
 
 **Alternatives not taken**
 
 - **Deployment + a standalone PVC:** works for one replica, but a rolling update could start a second pod that tries to mount the same `ReadWriteOnce` disk and gets stuck. A StatefulSet stops the old pod before starting the new one.
 - **Azure Database for PostgreSQL (managed):** backups and HA out of the box, but it costs credits all the time (it cannot be stopped as easily as the cluster), and the evaluator would need to create one too. The subject asks us to deploy the app on the cluster.
 - **`emptyDir` or no volume:** every pod restart would wipe the votes.
+- **Schema through a `Job`, a `postStart` hook or an `initContainer` in worker/result:** each would re-apply the schema on every deploy or start, which also covers existing databases. But each adds a moving part (a Job is immutable and must be renamed to run again; a failing `postStart` kills the container; an `initContainer` ties the apps to the schema) for a one-table schema that never changes.
+
+---
+
+## 8. Result: 2 fixed replicas, hardened container
+
+**Choice:** `k8s/result.yaml` is a `Deployment` with 2 replicas and the rollout settings of our baseline (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Liveness probes `/healthz`, readiness probes `/readyz`. The container runs as uid 1000 with a read-only root filesystem and no Linux capabilities. Its image is written as the bare name `result`; the `images` field of `kustomization.yaml` sets the registry and the tag.
+
+**Pros**
+
+- **2 replicas:** the `Service` spreads users over both, and a rollout or a drained node always leaves one pod serving.
+- **Fact:** with `maxUnavailable: 0`, the Deployment never goes below the desired number of available pods during a rollout; `maxSurge: 1` adds the new pod first. `minReadySeconds` makes a new pod count as available only after it stayed Ready that long. ([Kubernetes docs: Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#rolling-update-deployment))
+- **Probes match the app:** `/healthz` only says the process is alive, so a database outage does not make Kubernetes restart Result in a loop. `/readyz` checks PostgreSQL with `SELECT 1`: a pod that lost the database stops getting traffic until it is back.
+- **No HPA on Result, on purpose:** each pod runs one `SELECT ... GROUP BY` per second and broadcasts it to its WebSocket clients, so its load barely grows with viewers. WebSocket connections stay on the pod they opened on, so a pod added by an HPA would only get new visitors. Poll gets the HPA instead (#33).
+- **Port 80 as non-root:** **Fact:** `net.ipv4.ip_unprivileged_port_start` is a "safe" sysctl, allowed by default since Kubernetes 1.22, and setting it to `0` lets any user bind ports below 1024 inside the pod's network namespace. ([Kubernetes docs: sysctls](https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/#safe-and-unsafe-sysctls)) Some container runtimes already do this, but declaring it makes the pod work the same on any cluster.
+- **Hardening:** no privilege escalation, all capabilities dropped, read-only root filesystem. Result writes nothing to disk, so a compromised process cannot drop files in the container.
+- **Image through `images`:** CI only rewrites `newTag` (the git SHA, section 5). An evaluator with their own registry only changes `newName`. No manifest edit.
+
+**Cons**
+
+- If PostgreSQL is down, both pods fail readiness and leave the Service: the Result page is unreachable instead of showing stale counts. Acceptable: without the database it has nothing to show, and Poll keeps working.
+- Open WebSocket connections are cut when their pod stops during a rollout. The browser reconnects by itself (socket.io), and the client only uses the WebSocket transport, so no sticky sessions are needed.
+- `envFrom: app-config` also injects `REDIS_HOST`, which Result does not use. Harmless, and simpler than listing each key.
+
+**Alternatives not taken**
+
+- **1 replica:** any rollout or node drain would cut the page.
+- **HPA:** see above.
+- **Readiness on `/healthz` too:** pods would keep getting traffic while they cannot answer with data.

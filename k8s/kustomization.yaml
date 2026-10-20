@@ -13,6 +13,14 @@ labels:
 resources:
   - namespace.yaml
   - postgres.yaml
+  - result.yaml
+
+# Real registry and tag of the app images (manifests use the bare name).
+# CI sets newTag to the git SHA; an evaluator sets newName to their own registry.
+images:
+  - name: result
+    newName: bernsteinacrmaeva.azurecr.io/result
+    newTag: f880145
 
 # Non-secret settings shared by poll, worker, result and postgres.
 # Kustomize appends a content hash to the name and rewrites references,
@@ -25,6 +33,11 @@ configMapGenerator:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
+  # schema.sql, run by the postgres image on its first start (empty data dir only).
+  # Copy of poll-application/schema.sql: Kustomize cannot read files outside k8s/; CI checks they match.
+  - name: postgres-init
+    files:
+      - schema.sql
 
 # Passwords, read from the gitignored secrets.env (template: secrets.env.example).
 # Same hash suffix as above: changing a password rolls the Deployments.
