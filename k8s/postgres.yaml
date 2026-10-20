@@ -80,6 +80,8 @@ spec:
               memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
           volumeMounts:
             # The image keeps PGDATA in the 18/docker subdirectory of this mount.
             - name: data

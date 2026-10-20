@@ -16,6 +16,9 @@ Summary:
 | Secrets       | Kustomize `secretGenerator` from a gitignored `k8s/secrets.env`                         |
 | Database      | PostgreSQL `StatefulSet` (1 replica) on an Azure Disk PVC, `ClusterIP` Service          |
 | Result        | `Deployment`, 2 fixed replicas, no HPA, non-root with a read-only root filesystem       |
+| Queue         | Redis `Deployment` (1 replica), in-memory only, `ClusterIP` Service                     |
+| Worker        | `Deployment` (1 replica), no Service, probes check Redis and PostgreSQL                 |
+| Poll          | `Deployment`, 2 replicas, read-only root filesystem with an in-memory `/tmp`            |
 
 Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/cluster-setup.md).
 
@@ -195,7 +198,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **Fact:** A StatefulSet gives each pod a stable identity and its own PVC from `volumeClaimTemplates`. The PVC is kept when the pod is deleted or rescheduled, and the new pod mounts the same volume. ([Kubernetes docs: StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)) Votes survive a pod restart, a node drain or a `kubectl rollout restart`.
 - **Fact:** By default, deleting or scaling down a StatefulSet does not delete its PVCs (`persistentVolumeClaimRetentionPolicy` defaults to `Retain`). ([same source](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#persistentvolumeclaim-retention)) Deleting or re-applying the StatefulSet keeps the data. **Careful:** `kubectl delete -k k8s/` also deletes the `bernstein` namespace, hence the PVC, and the AKS `default` storage class has `reclaimPolicy: Delete`, so the disk goes with it.
 - `ClusterIP` only: the database has no public IP. Only pods in the cluster reach it, through the `postgres` DNS name used in `POSTGRES_HOST`.
-- Non-root (uid 70, `fsGroup: 70` so the disk is writable for that user), with `allowPrivilegeEscalation: false`.
+- Non-root (uid 70, `fsGroup: 70` so the disk is writable for that user), with `allowPrivilegeEscalation: false` and all Linux capabilities dropped: running as uid 70 from the start, the entrypoint never needs `chown` or `setuid`.
 - Same image as `docker-compose.yml`: what CI tests locally is what runs on the cluster.
 - **Schema:** `schema.sql` is mounted from the `postgres-init` ConfigMap into `/docker-entrypoint-initdb.d`. **Fact:** the image runs the `*.sql` files found there on its first start, when the data directory is empty. ([postgres image docs: Initialization scripts](https://hub.docker.com/_/postgres)) A fresh deploy gets the `votes` table with no manual step, exactly like `docker-compose.yml`. The script uses `CREATE TABLE IF NOT EXISTS`, so running it again cannot fail.
 
