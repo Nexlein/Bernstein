@@ -12,6 +12,7 @@ labels:
 
 resources:
   - namespace.yaml
+  - postgres.yaml
 
 # Non-secret settings shared by poll, worker, result and postgres.
 # Kustomize appends a content hash to the name and rewrites references,
