@@ -1,0 +1,90 @@
+# Redis: one replica, in-memory vote queue, reachable only inside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: redis
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: redis
+spec:
+  replicas: 1
+  # Baseline rollout: the new pod is Ready before the old one stops, so Poll's /readyz never loses Redis.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  minReadySeconds: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+    spec:
+      securityContext:
+        # uid/gid of the "redis" user in redis:*-alpine.
+        runAsUser: 999
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: redis
+          image: redis:8-alpine
+          command:
+            - sh
+            - -c
+            # --save '' --appendonly no: pure in-memory queue, no RDB/AOF files written in the container.
+            - |
+              if [ -n "$REDIS_PASSWORD" ]; then
+                exec redis-server --save '' --appendonly no --requirepass "$REDIS_PASSWORD"
+              else
+                exec redis-server --save '' --appendonly no
+              fi
+          ports:
+            - name: redis
+              containerPort: 6379
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: REDIS_PASSWORD
+                  optional: true
+          readinessProbe:
+            exec:
+              command: ['sh', '-c', 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ['sh', '-c', 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
