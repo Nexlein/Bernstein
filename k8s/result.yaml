@@ -1,0 +1,74 @@
+# Result: Node.js front end showing the vote counts, read from PostgreSQL.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: result
+  labels:
+    app.kubernetes.io/name: result
+spec:
+  replicas: 2
+  # Zero-downtime rollout: start one new pod, wait until it is Ready for 5 s, then stop an old one.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  minReadySeconds: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: result
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: result
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        sysctls:
+          # Lets the non-root user (uid 1000 in the image) listen on port 80.
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: '0'
+      containers:
+        - name: result
+          # Registry and tag are set by the `images` field of kustomization.yaml.
+          image: result
+          ports:
+            - name: http
+              containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: POSTGRES_PASSWORD
+          # Liveness: the process answers. Readiness: it also reaches PostgreSQL.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
