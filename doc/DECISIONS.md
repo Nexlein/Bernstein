@@ -291,3 +291,28 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 
 - **2+ replicas permanently:** Works safely thanks to atomic `BLPOP` and idempotent SQL upserts, but doubles steady-state JVM memory consumption (~400 MiB) on our 2 student nodes for a queue that a single pod drains in milliseconds.
 - **Adding a `ClusterIP` Service:** Unnecessary because nothing in the cluster calls the Worker over HTTP.
+
+---
+
+## 11. Poll: 2 replicas, Gunicorn `/tmp` volume and non-root
+
+**Choice:** `k8s/poll.yaml` is a `Deployment` with 2 replicas and the baseline rollout settings (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Liveness probes `/healthz`, readiness probes `/readyz`. The container runs as uid `10001` with `net.ipv4.ip_unprivileged_port_start=0`, a read-only root filesystem, an `emptyDir` volume mounted at `/tmp`, and all Linux capabilities dropped. Its image is written as the bare name `poll`, resolved via `images` in `kustomization.yaml`.
+
+**Pros**
+
+- **2 replicas & zero-downtime rollout:** Spreads incoming HTTP `GET /` and `POST /` vote traffic across two pods and guarantees at least one pod keeps serving during rolling updates (`maxUnavailable: 0`, `maxSurge: 1`, `minReadySeconds: 5`) or single-node maintenance.
+- **Stateless voter identity:** Voter identity (`voter_id`) is stored as an HTTP cookie in the browser, and each `POST /` pushes the vote directly to Redis (`RPUSH votes`). Any Poll replica can serve any request without sticky sessions.
+- **Probes match the dependency:** `/healthz` only checks that Gunicorn/Flask answers HTTP requests, so a Redis restart does not trigger a container restart loop. `/readyz` pings Redis (`PING`): a pod that cannot reach Redis is removed from Service endpoints until Redis is back.
+- **`readOnlyRootFilesystem: true` with an `emptyDir` `/tmp`:** **Fact:** Gunicorn creates a temporary heartbeat file (`wgunicorn-*`) for each worker in `/tmp` ([Gunicorn FAQ: Worker Heartbeat](https://docs.gunicorn.org/en/stable/faq.html#how-do-i-avoid-blocking-os-fchmod-calls)) and, since Gunicorn 25+, a control socket in `$HOME/.gunicorn/gunicorn.ctl` ([Gunicorn docs: Control Socket](https://docs.gunicorn.org/en/stable/settings.html#control-socket)). Mounting an `emptyDir` at `/tmp` and setting `HOME=/tmp` lets Gunicorn create both files while keeping `/app` and the rest of the root filesystem strictly read-only.
+- **Hardening & port 80 as non-root:** Runs as uid `10001` (matching `poll/Dockerfile`), `allowPrivilegeEscalation: false`, all capabilities dropped, and uses the safe pod sysctl `net.ipv4.ip_unprivileged_port_start=0` to bind port 80.
+
+**Cons**
+
+- If Redis is down, both Poll pods fail `/readyz` and leave the Service (see section 9 Cons).
+- `envFrom: app-config` also injects `POSTGRES_*`, which Poll does not use. Harmless, and keeps configuration uniform across workloads.
+
+**Alternatives not taken**
+
+- **1 replica:** A rollout or node drain would drop user requests.
+- **`readOnlyRootFilesystem: false`:** Easier for Gunicorn's `/tmp` files, but leaves the application filesystem writable if compromised.
+- **Setting `OPTION_A..D` in `app-config`:** Defaults (`Ansible`, `Chef`, `Puppet`, `SaltStack`) are already defined in `app.py` and hardcoded in Result's `index.html`; overriding them only in Poll's environment would desynchronize Poll and Result labels.
