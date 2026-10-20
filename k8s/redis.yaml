@@ -42,11 +42,12 @@ spec:
           command:
             - sh
             - -c
+            # --save '' --appendonly no: pure in-memory queue, no RDB/AOF files written in the container.
             - |
               if [ -n "$REDIS_PASSWORD" ]; then
-                exec redis-server --requirepass "$REDIS_PASSWORD"
+                exec redis-server --save '' --appendonly no --requirepass "$REDIS_PASSWORD"
               else
-                exec redis-server
+                exec redis-server --save '' --appendonly no
               fi
           ports:
             - name: redis
