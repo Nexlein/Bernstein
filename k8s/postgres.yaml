@@ -84,6 +84,14 @@ spec:
             # The image keeps PGDATA in the 18/docker subdirectory of this mount.
             - name: data
               mountPath: /var/lib/postgresql
+            # Scripts here run once, when the data dir is empty (first start).
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init
   volumeClaimTemplates:
     - metadata:
         name: data
