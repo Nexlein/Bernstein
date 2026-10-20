@@ -246,19 +246,21 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 
 ## 9. Queue: Redis Deployment (in-memory, single replica)
 
-**Choice:** `k8s/redis.yaml` runs `redis:8-alpine` as a `Deployment` with 1 replica and no PersistentVolumeClaim. A `ClusterIP` Service named `redis` on port `6379` exposes it inside the cluster only. The container runs as the image's `redis` user (uid 999, gid 1000) with all Linux capabilities dropped. It starts with `--requirepass "$REDIS_PASSWORD"` when `REDIS_PASSWORD` is set in `app-secrets`, or without authentication when left empty.
+**Choice:** `k8s/redis.yaml` runs `redis:8-alpine` as a `Deployment` with 1 replica and no PersistentVolumeClaim. A `ClusterIP` Service named `redis` on port `6379` exposes it inside the cluster only. The container runs as the image's `redis` user (uid 999, gid 1000) with all Linux capabilities dropped. Persistence is off (`--save '' --appendonly no`): Redis writes no RDB or AOF file. It starts with `--requirepass "$REDIS_PASSWORD"` when `REDIS_PASSWORD` is set in `app-secrets`, or without authentication when left empty. The Deployment uses the baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`).
 
 **Pros**
 
 - **Transient buffer, not source of truth:** Poll pushes votes with `RPUSH` and Worker immediately pops them with `BLPOP` to upsert them into PostgreSQL. PostgreSQL is the sole durable store (section 7); keeping Redis as a stateless `Deployment` avoids paying for and managing a second Azure Managed Disk.
 - **Fast rescheduling on node drain:** Unlike a `StatefulSet` bound to a `ReadWriteOnce` Azure Disk (which takes up to a minute or two to detach and re-attach across nodes), a diskless `Deployment` pod starts on the surviving node in seconds.
 - **`ClusterIP` only:** The queue has no public IP and is only reachable inside the cluster via the `redis` DNS name matching `REDIS_HOST=redis` in `app-config`.
-- **Optional password with safe probes:** **Fact:** Passing `-a <password>` on the `redis-cli` command line exposes the password in process listings and logs, whereas the `REDISCLI_AUTH` environment variable authenticates without leaking it in `ps` args. ([Redis docs: redis-cli authentication](https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/)) Both `readinessProbe` and `livenessProbe` run `REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -q PONG`, which works whether `REDIS_PASSWORD` is empty or set.
+- **Optional password with probes that work either way:** **Fact:** `redis-cli` reads the password from the `REDISCLI_AUTH` environment variable, which avoids passing it with `-a` on the command line. ([Redis docs: redis-cli](https://redis.io/docs/latest/develop/tools/cli/)) Both `readinessProbe` and `livenessProbe` run `REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -q PONG`, which works whether `REDIS_PASSWORD` is empty or set, and keeps the password out of the probe's arguments. The server itself still receives it as `--requirepass`, so it is visible in `ps` inside the pod; anyone with that access can read the pod's environment anyway.
+- **In-memory only:** no snapshot or append-only file, so Redis never forks to save to disk (each fork would duplicate its memory under a 128Mi limit) and writes nothing to the container filesystem. A file inside the container would be lost on restart anyway.
 - **Hardening:** Non-root (`runAsUser: 999`, `runAsNonRoot: true`), `allowPrivilegeEscalation: false`, and `capabilities.drop: ["ALL"]`.
 
 **Cons**
 
 - **Single replica and in-memory:** If the Redis pod crashes or is rescheduled at the exact moment a vote is sitting in the list (for instance while PostgreSQL or the Worker is down), queued votes not yet flushed to PostgreSQL are lost, and Poll returns `503` on `/readyz` during the few seconds the pod restarts. Acceptable for a voting demo where the Worker drains the queue in milliseconds under normal operation.
+- **Single point of failure for Poll:** Poll's `/readyz` pings Redis, so while Redis is down every Poll pod is unready and the Poll page is unreachable (Result keeps working). A Redis pod restart takes about 4 s (measured on AKS). Rollouts avoid the gap: with `maxSurge: 1` / `maxUnavailable: 0`, the new Redis pod is Ready before the old one stops. A node drain still causes that short gap. During a rollout, both Redis pods briefly sit behind the Service: new Poll connections may push to the new pod while the worker still pops from the old one. Nothing is lost: when the old pod stops, the worker's connection fails, it exits, restarts and reconnects to the new pod, which still holds those votes.
 
 **Alternatives not taken**
 
