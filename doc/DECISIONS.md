@@ -276,7 +276,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 
 **Pros**
 
-- **1 replica is enough and saves node RAM:** The Worker runs on a Java 25 JVM (`eclipse-temurin:25-jre`), which has a larger memory footprint than Python or Node.js (`requests: 192Mi`, `limits: 384Mi`). A single instance pops (`BLPOP`) and upserts thousands of votes per second.
+- **1 replica is enough and saves node RAM:** The Worker runs on a Java 25 JVM (`eclipse-temurin:25-jre`), which has a larger memory footprint than Python or Node.js (`requests: 192Mi`, `limits: 384Mi`). Each vote is one `BLPOP` and one single-row upsert, so a single instance keeps up with far more votes than a demo produces (tested on AKS: a vote pushed to Redis is in PostgreSQL within a second).
 - **Safe rollout overlap (`maxSurge: 1`, `maxUnavailable: 0`):** During a rolling update, the new Worker pod starts and must pass `/readyz` for `minReadySeconds: 5` before the old pod is terminated, so two workers briefly consume the queue in parallel. **Fact:** `BLPOP` is atomic and delivers each popped element to a single blocked client ([Redis docs: BLPOP](https://redis.io/docs/latest/commands/blpop/)), and the PostgreSQL `INSERT ... ON CONFLICT (id) DO UPDATE` statement is idempotent, so two concurrent workers never duplicate a vote.
 - **No `Service` resource:** No user or cluster component connects to the Worker; it only opens outbound TCP connections to `redis:6379` and `postgres:5432`. Only the kubelet reaches port 80 on the pod IP to run `/healthz` and `/readyz` probes. Omitting the `Service` avoids exposing an unused cluster endpoint.
 - **Probes match the dual dependency:** `/healthz` answers `200` as soon as the embedded HTTP server starts, so a temporary Redis or PostgreSQL outage does not trigger a restart loop while `connectToRedis` / `connectToDB` retry. `/readyz` pings Redis and runs `dbConn.isValid(2)` on PostgreSQL, so a new pod in a rollout only replaces the old pod once both backing stores are connected.
@@ -286,6 +286,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 
 - **Brief pause on unexpected pod crash or node drain:** With 1 replica, if the node hosting the Worker is drained or crashes, vote processing pauses for a few seconds until the replacement pod starts. Votes are not lost: Poll keeps pushing them to the Redis list, and the new Worker drains the backlog as soon as it connects.
 - **No `SIGTERM` shutdown hook in `Worker.java`:** If `updateVote` fails with a `SQLException`, the worker pushes the vote back to Redis with `LPUSH`. However, if the JVM receives `SIGTERM` during the sub-millisecond window between `BLPOP` returning a vote and `executeUpdate()` committing it, the process exits before the upsert finishes and that single vote is lost (most of the time the worker is idle inside `BLPOP`, where nothing has been popped yet).
+- **Order is not guaranteed during the rollout overlap:** while two workers run, a voter who changes their vote twice within a few milliseconds could see the older vote committed last, since each worker upserts independently. Only possible during the few seconds of a worker rollout, and the voter can simply vote again.
 
 **Alternatives not taken**
 
