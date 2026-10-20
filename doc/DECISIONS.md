@@ -14,6 +14,7 @@ Summary:
 | Public access | One `Service` of type `LoadBalancer` each for Poll and Result                           |
 | Image tags    | Git commit SHA                                                                          |
 | Secrets       | Kustomize `secretGenerator` from a gitignored `k8s/secrets.env`                         |
+| Database      | PostgreSQL `StatefulSet` (1 replica) on an Azure Disk PVC, `ClusterIP` Service          |
 
 Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/cluster-setup.md).
 
@@ -181,3 +182,29 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **`kubectl create secret generic ... --from-literal`:** one-off and imperative; the password ends up in the shell history and the step is easy to forget.
 - **Sealed Secrets:** lets an encrypted Secret be committed, but the key belongs to the controller of one cluster. An evaluator's fresh cluster could not decrypt ours, and they would need an extra tool.
 - **Azure Key Vault + Secrets Store CSI driver:** the strongest option for production ([Microsoft Learn](https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver)), but it adds a Key Vault, an identity and an add-on for one password. Over-built for this project.
+
+---
+
+## 7. Database: PostgreSQL StatefulSet with a persistent disk
+
+**Choice:** `k8s/postgres.yaml` runs `postgres:18-alpine` as a `StatefulSet` with 1 replica. Its data lives on a 1 GiB `PersistentVolumeClaim` (AKS default storage class, an Azure Disk) mounted at `/var/lib/postgresql`. A `ClusterIP` Service named `postgres` makes it reachable inside the cluster only. The container runs as the image's `postgres` user (uid 70).
+
+**Pros**
+
+- **Fact:** A StatefulSet gives each pod a stable identity and its own PVC from `volumeClaimTemplates`. The PVC is kept when the pod is deleted or rescheduled, and the new pod mounts the same volume. ([Kubernetes docs: StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)) Votes survive a pod restart, a node drain or a `kubectl rollout restart`.
+- **Fact:** By default, deleting or scaling down a StatefulSet does not delete its PVCs (`persistentVolumeClaimRetentionPolicy` defaults to `Retain`). ([same source](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#persistentvolumeclaim-retention)) Deleting or re-applying the StatefulSet keeps the data. **Careful:** `kubectl delete -k k8s/` also deletes the `bernstein` namespace, hence the PVC, and the AKS `default` storage class has `reclaimPolicy: Delete`, so the disk goes with it.
+- `ClusterIP` only: the database has no public IP. Only pods in the cluster reach it, through the `postgres` DNS name used in `POSTGRES_HOST`.
+- Non-root (uid 70, `fsGroup: 70` so the disk is writable for that user), with `allowPrivilegeEscalation: false`.
+- Same image as `docker-compose.yml`: what CI tests locally is what runs on the cluster.
+
+**Cons**
+
+- **Single replica: Postgres is not highly available.** If its node is drained, the pod stops and starts again on the other node (the Azure Disk is detached and re-attached, which takes up to a minute or two). During that time the worker and Result cannot reach the database. Poll keeps accepting votes: they wait in Redis and the worker stores them once Postgres is back. Real replication (a primary plus standbys, e.g. with an operator like CloudNativePG) is a lot of machinery for a demo app.
+- **Fact:** An Azure Disk is `ReadWriteOnce` and zonal: it can only be attached to one node at a time, in its zone. ([Microsoft Learn: Azure Disk CSI driver](https://learn.microsoft.com/en-us/azure/aks/azure-disk-csi)) Fine for one replica; our 2 nodes have no zones (zone `0`), so the pod can move to either node.
+- 1 GiB is enough for the votes table. Azure bills managed disks by size tier, so the smallest tier is billed even if we ask for less.
+
+**Alternatives not taken**
+
+- **Deployment + a standalone PVC:** works for one replica, but a rolling update could start a second pod that tries to mount the same `ReadWriteOnce` disk and gets stuck. A StatefulSet stops the old pod before starting the new one.
+- **Azure Database for PostgreSQL (managed):** backups and HA out of the box, but it costs credits all the time (it cannot be stopped as easily as the cluster), and the evaluator would need to create one too. The subject asks us to deploy the app on the cluster.
+- **`emptyDir` or no volume:** every pod restart would wipe the votes.
