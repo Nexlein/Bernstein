@@ -108,6 +108,23 @@ docker compose down -v
 
 ---
 
+## Kubernetes Secrets
+
+The repository holds no password. Before deploying, create `k8s/secrets.env` from the template and fill it in:
+
+```bash
+cp k8s/secrets.env.example k8s/secrets.env
+```
+
+| Key                 | Required | Effect                                     |
+| ------------------- | -------- | ------------------------------------------ |
+| `POSTGRES_PASSWORD` | yes      | Password of the PostgreSQL `postgres` user |
+| `REDIS_PASSWORD`    | no       | Empty = Redis runs without authentication  |
+
+`k8s/secrets.env` is gitignored. `kubectl apply -k k8s/` turns it into the `app-secrets` Secret and fails if the file is missing. Registry access needs no secret: AKS pulls from ACR through `--attach-acr` (see [`doc/DECISIONS.md`](doc/DECISIONS.md) §2).
+
+---
+
 ## Roadmap & Decisions
 
 Work is tracked as GitHub issues, grouped into 4 epics: [Registry & pipeline](https://github.com/Nexlein/Bernstein/issues/43), [K8s manifests](https://github.com/Nexlein/Bernstein/issues/44), [Zero-downtime & resilience](https://github.com/Nexlein/Bernstein/issues/45), [Docs & defense](https://github.com/Nexlein/Bernstein/issues/46). Start from the lowest open issue; dependencies are set as "blocked by".
@@ -130,6 +147,8 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 │       ├── ci.yml            # Linting, Docker build matrix & integration tests
 │       └── mirror.yml        # Automatic mirror to official Epitech repository
 ├── .husky/                   # Version-controlled Git pre-commit hooks
+├── k8s/                      # Kustomize manifests (kubectl apply -k k8s/)
+│   └── secrets.env.example   # Template for the Kubernetes Secret (copy to secrets.env)
 ├── doc/
 │   ├── DECISIONS.md          # Technical choices, trade-offs and rejected alternatives
 │   ├── setup/                # Step-by-step AKS cluster & ACR registry setup guide
@@ -142,7 +161,6 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 ├── scripts/
 │   └── codemap.mjs           # Automated code map generator script
 ├── docker-compose.yml        # Local development and CI integration compose file
-├── secret.example.yaml       # Template for Kubernetes secrets
 ├── .env.example              # Template for environment variables
 ├── CLAUDE.md                 # Agent instructions, architecture & guardrails
 └── package.json              # Development scripts (format, codemap, husky)
@@ -164,5 +182,5 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 ## Key Requirements & Defense Guardrails
 
 - **Zero-Downtime Rolling Updates**: User-facing services (`poll`, `result`) must maintain 100% availability during rolling deployments (`maxUnavailable: 0`, `readinessProbe` enabled, replicas $\ge 2$).
-- **Secret Isolation**: Sensitive credentials (`POSTGRES_PASSWORD`, cloud tokens) are never committed to Git and are configured via Kubernetes Secrets following `secret.example.yaml`.
+- **Secret Isolation**: Sensitive credentials (`POSTGRES_PASSWORD`, cloud tokens) are never committed to Git and are configured via a Kubernetes Secret generated from `k8s/secrets.env` (template: `k8s/secrets.env.example`).
 - **High Availability & Persistence**: PostgreSQL data is mounted on a `PersistentVolumeClaim` (PVC), and all pods specify CPU/Memory resource requests and limits.

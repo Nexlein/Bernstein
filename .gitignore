@@ -5,7 +5,7 @@
 *.secret
 secret.yaml
 *secret*.yaml
-!secret.example.yaml
+k8s/secrets.env
 *.key
 *.pem
 credentials.json
