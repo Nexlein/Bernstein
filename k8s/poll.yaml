@@ -81,5 +81,8 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        # In memory (tmpfs), as the Gunicorn FAQ advises for the heartbeat files; counts toward the memory limit.
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
