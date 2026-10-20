@@ -38,6 +38,10 @@ jobs:
       - name: Validate Docker Compose Configuration
         run: docker compose config --quiet
 
+      - name: Verify K8s Schema Copy
+        run: |
+          diff poll-application/schema.sql k8s/schema.sql || (echo "ERROR: k8s/schema.sql differs from poll-application/schema.sql. Copy it again: cp poll-application/schema.sql k8s/schema.sql" && exit 1)
+
   build-microservices:
     name: Build Container Images
     runs-on: ubuntu-latest
