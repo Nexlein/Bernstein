@@ -318,3 +318,26 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **1 replica:** A rollout or node drain would drop user requests.
 - **`readOnlyRootFilesystem: false`:** Easier for Gunicorn's `/tmp` files, but leaves the application filesystem writable if compromised.
 - **Setting `OPTION_A..D` in `app-config`:** Defaults (`Ansible`, `Chef`, `Puppet`, `SaltStack`) are already defined in `app.py` and hardcoded in Result's `index.html`; overriding them only in Poll's environment would desynchronize Poll and Result labels.
+
+---
+
+## 12. Graceful shutdown: `preStop` sleep and grace period
+
+**Choice:** Poll and Result get `lifecycle.preStop.sleep.seconds: 5`. Poll's `terminationGracePeriodSeconds` is 45, Result's is 30.
+
+**Pros**
+
+- **Fact:** When a pod is deleted, Kubernetes removes it from the Service endpoints and starts its shutdown **in parallel**; the `preStop` hook runs first, and `SIGTERM` is only sent once it returns. ([Kubernetes docs: Pod termination](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)) Without a pause, the app could close its socket while kube-proxy on some node still routes new connections to it, which shows up as errors during a rollout or a drain. The 5 s sleep lets every node drop the pod from its rules while the pod keeps serving normally.
+- **Fact:** `sleep` is a built-in hook handler: the kubelet waits, no `sleep` binary is needed in the image. ([Kubernetes docs: Container lifecycle hooks](https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/#hook-handler-implementations)) It works the same with our read-only root filesystems.
+- **Grace periods sized to each app:** the grace period counts from the start of `preStop`. Poll: 5 s + Gunicorn's graceful shutdown (its `graceful_timeout` defaults to 30 s) → 45 s. Result: 5 s + its own drain on `SIGTERM` (at most 10 s in `server.js`) → 30 s. After that, the kubelet sends `SIGKILL`.
+
+**Cons**
+
+- Every rollout and drain takes about 5 s longer per pod.
+- 5 s is an estimate of endpoint propagation on a 2-node cluster, not a guarantee. The zero-downtime test (#29, #30) is what proves it.
+
+**Alternatives not taken**
+
+- **No `preStop`:** relies on the endpoint removal winning the race against the app's shutdown. Fine most of the time, not always.
+- **`exec: ["sleep", "5"]`:** same effect, but needs a `sleep` binary in every image. The built-in handler does not.
+- **A longer sleep (15-30 s):** safer margin, but every rollout of 2 pods would last much longer for no measured gain.

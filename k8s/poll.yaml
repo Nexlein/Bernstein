@@ -45,6 +45,8 @@ spec:
           # Lets the non-root user (uid 10001 in the image) listen on port 80.
           - name: net.ipv4.ip_unprivileged_port_start
             value: '0'
+      # preStop (5 s) + Gunicorn's graceful shutdown (up to 30 s by default), with margin.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: poll
           # Registry and tag are set by the `images` field of kustomization.yaml.
@@ -80,6 +82,12 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 2
+          # On shutdown, keep serving 5 s while the pod is removed from the Service endpoints
+          # on every node; only then does the container receive SIGTERM.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           resources:
             requests:
               cpu: 50m
