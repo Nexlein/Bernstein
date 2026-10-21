@@ -47,6 +47,17 @@ spec:
             value: '0'
       # preStop (5 s) + Result's own drain on SIGTERM (at most 10 s, see server.js), with margin.
       terminationGracePeriodSeconds: 30
+      # Prefer one replica per node, so a node failure or drain never takes both down.
+      # "Preferred", not "required": during a rollout the surge pod (3rd) must still schedule on 2 nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: result
       containers:
         - name: result
           # Registry and tag are set by the `images` field of kustomization.yaml.
