@@ -51,15 +51,17 @@ spec:
                   name: app-secrets
                   key: REDIS_PASSWORD
                   optional: true
-          # Liveness: the HTTP server answers. Readiness: it reaches both Redis and PostgreSQL.
+          # Both probes use /readyz (Redis PING + PostgreSQL isValid). The worker only notices a dead
+          # DB connection when it writes; liveness on /readyz restarts it after ~1 min instead, so it
+          # reconnects by itself. Safe: it has no Service and no users. Initial delay covers first start.
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3
-            failureThreshold: 3
+            failureThreshold: 6
           readinessProbe:
             httpGet:
               path: /readyz
