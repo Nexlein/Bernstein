@@ -17,6 +17,7 @@ resources:
   - result.yaml
   - worker.yaml
   - poll.yaml
+  - pdb.yaml
 
 # Real registry and tag of the app images (manifests use the bare name).
 # CI sets newTag to the git SHA; an evaluator sets newName to their own registry.

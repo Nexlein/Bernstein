@@ -22,7 +22,7 @@ redis, postgres: see `docker-compose.yml` (internal only).
 - `doc/`: DECISIONS.md
 - `doc/setup/`: cluster-setup.md
 - `doc/subject/`: README.md, SUBJECT.md
-- `k8s/`: kustomization.yaml, namespace.yaml, poll.yaml, postgres.yaml, redis.yaml, result.yaml, schema.sql, secrets.env.example, worker.yaml
+- `k8s/`: kustomization.yaml, namespace.yaml, pdb.yaml, poll.yaml, postgres.yaml, redis.yaml, result.yaml, schema.sql, secrets.env.example, worker.yaml
 - `poll-application/`: README.md, schema.sql
 - `poll-application/poll/`: .dockerignore, Dockerfile, app.py, requirements.txt, wsgi.py
 - `poll-application/poll/templates/`: index.html

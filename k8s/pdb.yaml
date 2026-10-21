@@ -1,0 +1,25 @@
+# Voluntary disruptions (kubectl drain, node upgrades) may only evict a Poll or Result pod
+# while at least one other pod of the same app stays available.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: poll
+  labels:
+    app.kubernetes.io/name: poll
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: poll
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: result
+  labels:
+    app.kubernetes.io/name: result
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: result
