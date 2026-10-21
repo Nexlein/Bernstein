@@ -17,6 +17,7 @@ Avancement :
 | 6      | `worker.yaml`                     | fait |
 | 7      | `poll.yaml`                       | fait |
 | 8      | `result.yaml`                     | fait |
+| 8 bis  | `pdb.yaml`                        | fait |
 | 9      | Scénarios (rollout, drain, panne) | fait |
 
 ---
@@ -39,6 +40,9 @@ Avancement :
 | **PV**                                  | PersistentVolume : le disque réel qui répond à la demande (ici un disque Azure créé automatiquement).                         | 1 disque Azure de 1 Gi                                       |
 | **Namespace**                           | Un espace isolé dans le cluster, comme un dossier pour les objets.                                                            | `bernstein`                                                  |
 | **Probe**                               | Test de santé lancé régulièrement par le kubelet : liveness (redémarrer ?), readiness (envoyer du trafic ?).                  | `/healthz`, `/readyz`, `pg_isready`, `redis-cli`             |
+| **PodDisruptionBudget**                 | Règle « jamais moins de N pods disponibles » que `kubectl drain` et les mises à jour de nœuds doivent respecter.              | `poll`, `result` (`minAvailable: 1`)                         |
+| **Anti-affinity**                       | Règle de placement : « évite un nœud qui a déjà un pod comme moi ».                                                           | Poll et Result : 1 pod par nœud                              |
+| **preStop**                             | Action lancée juste avant l'arrêt d'un conteneur, avant le `SIGTERM`.                                                         | `sleep` de 5 s sur Poll et Result                            |
 | **kubelet**                             | L'agent Kubernetes sur chaque nœud : lance les conteneurs et exécute les probes.                                              | 1 par nœud, géré par AKS                                     |
 | **ClusterIP / NodePort / LoadBalancer** | Les 3 types de Service, emboîtés : adresse interne ; + un port sur chaque nœud ; + une IP publique du cloud devant les nœuds. | `ClusterIP` : postgres, redis. `LoadBalancer` : poll, result |
 | **kube-proxy**                          | Composant sur chaque nœud qui programme le réseau : il envoie le trafic d'un Service vers l'un de ses pods ready.             | 1 par nœud, géré par AKS                                     |
@@ -48,25 +52,26 @@ Avancement :
 
 ## 1. Ce qui est créé dans le cluster
 
-### Ce qu'on écrit (13 objets)
+### Ce qu'on écrit (15 objets)
 
 `kubectl kustomize k8s/` produit exactement ces objets :
 
-| Type        | Nom                    | Vient de             | Rôle                                      |
-| ----------- | ---------------------- | -------------------- | ----------------------------------------- |
-| Namespace   | `bernstein`            | `namespace.yaml`     | Le « dossier » qui contient tout le reste |
-| ConfigMap   | `app-config-<hash>`    | `kustomization.yaml` | Adresses et noms (Redis, Postgres)        |
-| ConfigMap   | `postgres-init-<hash>` | `kustomization.yaml` | Le fichier `schema.sql`                   |
-| Secret      | `app-secrets-<hash>`   | `kustomization.yaml` | Les mots de passe (`secrets.env`)         |
-| Service     | `postgres`             | `postgres.yaml`      | Adresse interne de la base                |
-| Service     | `redis`                | `redis.yaml`         | Adresse interne de la file                |
-| Service     | `poll`                 | `poll.yaml`          | **IP publique** de la page de vote        |
-| Service     | `result`               | `result.yaml`        | **IP publique** de la page des résultats  |
-| StatefulSet | `postgres`             | `postgres.yaml`      | La base, avec son disque                  |
-| Deployment  | `redis`                | `redis.yaml`         | La file de votes                          |
-| Deployment  | `worker`               | `worker.yaml`        | Redis → Postgres                          |
-| Deployment  | `poll`                 | `poll.yaml`          | Page de vote                              |
-| Deployment  | `result`               | `result.yaml`        | Page des résultats                        |
+| Type                | Nom                    | Vient de             | Rôle                                                          |
+| ------------------- | ---------------------- | -------------------- | ------------------------------------------------------------- |
+| Namespace           | `bernstein`            | `namespace.yaml`     | Le « dossier » qui contient tout le reste                     |
+| ConfigMap           | `app-config-<hash>`    | `kustomization.yaml` | Adresses et noms (Redis, Postgres)                            |
+| ConfigMap           | `postgres-init-<hash>` | `kustomization.yaml` | Le fichier `schema.sql`                                       |
+| Secret              | `app-secrets-<hash>`   | `kustomization.yaml` | Les mots de passe (`secrets.env`)                             |
+| Service             | `postgres`             | `postgres.yaml`      | Adresse interne de la base                                    |
+| Service             | `redis`                | `redis.yaml`         | Adresse interne de la file                                    |
+| Service             | `poll`                 | `poll.yaml`          | **IP publique** de la page de vote                            |
+| Service             | `result`               | `result.yaml`        | **IP publique** de la page des résultats                      |
+| PodDisruptionBudget | `poll`, `result`       | `pdb.yaml`           | Au moins 1 pod de chaque toujours disponible pendant un drain |
+| StatefulSet         | `postgres`             | `postgres.yaml`      | La base, avec son disque                                      |
+| Deployment          | `redis`                | `redis.yaml`         | La file de votes                                              |
+| Deployment          | `worker`               | `worker.yaml`        | Redis → Postgres                                              |
+| Deployment          | `poll`                 | `poll.yaml`          | Page de vote                                                  |
+| Deployment          | `result`               | `result.yaml`        | Page des résultats                                            |
 
 ### Ce que Kubernetes crée tout seul à partir de ça
 
@@ -702,12 +707,12 @@ Les 2 mots de passe, pris un par un dans le Secret. Celui de Redis est optionnel
 ```yaml
 livenessProbe:
   httpGet:
-    path: /healthz
+    path: /readyz
     port: http
-  initialDelaySeconds: 5
+  initialDelaySeconds: 30
   periodSeconds: 10
   timeoutSeconds: 3
-  failureThreshold: 3
+  failureThreshold: 6
 readinessProbe:
   httpGet:
     path: /readyz
@@ -718,13 +723,14 @@ readinessProbe:
 ```
 
 - `httpGet` : le kubelet fait une requête HTTP sur l'IP du pod. Succès = code entre 200 et 399.
-- `/healthz` (liveness) : répond 200 dès que le petit serveur HTTP du worker est lancé. Il démarre **avant** les connexions à Redis et à Postgres, donc une base absente ne provoque pas de redémarrage en boucle.
-- `/readyz` (readiness) : 200 seulement si Redis répond à `PING` **et** si la connexion Postgres est valide (`isValid(2)`).
-- Délai de réaction : liveness 3 × 10 s, soit environ 30 s avant un redémarrage. Readiness 2 × 5 s, soit environ 10 s avant « pas prêt ».
+- Les **2 probes** visent `/readyz` : 200 seulement si Redis répond à `PING` **et** si la connexion Postgres est valide (`isValid(2)`). `/healthz` (toujours 200) n'est plus utilisé par le worker.
+- **Readiness** (2 × 5 s, soit environ 10 s) : sert à valider une mise à jour.
+- **Liveness** : 30 s d'attente au démarrage, puis 6 échecs × 10 s, soit environ **1 minute** sans Redis ou sans Postgres avant un redémarrage.
+- Pourquoi c'est différent de Poll et Result (#63) : le worker ne voit qu'une connexion Postgres morte quand il écrit. Avec la liveness sur `/healthz` (toujours 200), il restait `0/1` indéfiniment après un redémarrage de Postgres, jusqu'au vote suivant. Avec `/readyz`, le kubelet le redémarre et il se reconnecte. C'est sans risque : il n'a ni Service ni utilisateurs.
 
 Sans Service, la readiness ne coupe aucun trafic. Elle sert à **valider une mise à jour** : l'ancien worker n'est arrêté que quand le nouveau est connecté aux deux.
 
-**Comportement à connaître** (constaté sur AKS) : après un redémarrage de Postgres, la connexion du worker est morte, mais il ne s'en rend compte qu'au vote suivant. Entre-temps, il reste « non ready » (`0/1`). Au vote suivant, l'écriture échoue, il remet le vote dans la file (`LPUSH`), s'arrête, redémarre, puis le traite. **Aucun vote n'est perdu.**
+**Mesuré sur AKS** : Postgres supprimé, aucun vote envoyé. Postgres revient en 24 s, le worker passe `0/1`, puis il est redémarré par sa liveness et revient `1/1` à 66 s. Pendant une longue panne de la base, il redémarre en boucle (avec un délai croissant) : c'est attendu. Si un vote est en cours au moment de la panne, il est remis dans la file (`LPUSH`) avant l'arrêt : **aucun vote n'est perdu.**
 
 ### Ressources et sécurité du conteneur
 
@@ -823,6 +829,58 @@ C'est la page que voit l'évaluateur. Avec 2 pods, il en reste toujours un penda
 
 Avec 2 replicas, la stratégie (`maxSurge: 1`, `maxUnavailable: 0`) donne : 2 pods, puis 3 (un nouveau démarre), puis 2 (un ancien s'arrête), puis 3, puis 2. Il y a **toujours au moins 2 pods** qui servent (mesuré pendant un `rollout restart`).
 
+### Arrêt propre : `preStop` et délai de grâce
+
+```yaml
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - …
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+```
+
+Quand un pod doit s'arrêter (rollout, drain, suppression), Kubernetes fait **deux choses en parallèle** : il le retire des endpoints du Service, et il lance son arrêt. Sans précaution, l'app peut fermer avant que tous les nœuds aient arrêté de lui envoyer du trafic, d'où quelques erreurs.
+
+1. `preStop` → `sleep: 5` : le kubelet **attend 5 s** avant d'envoyer `SIGTERM`. Pendant ce temps, l'app sert normalement, et le retrait des endpoints a le temps de se propager. `sleep` est intégré à Kubernetes : aucun binaire n'est nécessaire dans l'image.
+2. Puis `SIGTERM` : Gunicorn termine les requêtes en cours (jusqu'à 30 s par défaut), puis s'arrête.
+3. `terminationGracePeriodSeconds: 45` : le délai **total**, compté depuis le début du `preStop`. Au-delà, le kubelet envoie `SIGKILL`. 5 s + 30 s, plus une marge : 45 s.
+
+### Répartition sur les nœuds : anti-affinity
+
+```yaml
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          matchLabelKeys: ['pod-template-hash']
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: poll
+```
+
+- `podAntiAffinity` : « évite les nœuds qui ont déjà un pod qui correspond à `labelSelector` ».
+- `topologyKey: kubernetes.io/hostname` : l'unité de répartition est le **nœud** (chaque nœud a un nom d'hôte différent).
+- `preferred…` + `weight: 100` : c'est une **préférence**, pas une obligation. Pendant un rollout, le 3e pod (surge) doit pouvoir se placer alors qu'il n'y a que 2 nœuds. Avec `required…`, il resterait `Pending` et bloquerait la mise à jour.
+- `IgnoredDuringExecution` : la règle ne s'applique qu'au placement. Un pod déjà lancé n'est jamais déplacé.
+- `matchLabelKeys: ['pod-template-hash']` : ne compter que les pods de **la même version**. Sans ça (constaté sur AKS), pendant un rollout, les anciens pods présents sur les 2 nœuds « occupent » les 2 nœuds, la préférence ne sert plus à rien, et les 2 nouveaux pods finissaient sur le même nœud.
+
+### Gunicorn avec des threads
+
+```yaml
+- name: GUNICORN_CMD_ARGS
+  value: '--threads 4'
+```
+
+- L'image lance `gunicorn --workers 2` : 2 workers **synchrones**, qui traitent **une connexion à la fois** chacun.
+- **Mesuré sur AKS** : environ **3,5 % des requêtes** vers Poll échouaient (timeout de 3 s), même sans rollout, et via l'IP publique comme depuis l'intérieur du cluster. Une connexion lente ou inactive bloque un worker entier, et 2 suffisent à rendre le pod muet. Result (Node.js, asynchrone) n'avait aucune erreur.
+- `GUNICORN_CMD_ARGS` : Gunicorn lit cette variable comme des options en plus. `--threads 4` le fait passer en worker `gthread` : 2 workers × 4 threads = 8 requêtes en parallèle par pod. L'option `--workers 2` de la ligne de commande reste prioritaire. On ne touche ni au Dockerfile ni au code fournis.
+- Résultat : **0 erreur sur 656 requêtes**, et la latence p99 passe de 1,4 s à 0,17 s.
+
 ### Uniquement Redis
 
 ```yaml
@@ -888,6 +946,46 @@ Le load balancer Azure travaille en **couche 4** (TCP) : il fait suivre les conn
 
 Un vote peut atteindre un pod Poll et ses scores s'afficher via n'importe quel pod Result : chaque pod Result relit lui-même Postgres chaque seconde.
 
+### Arrêt propre (comme Poll, partie 7) : `preStop` et délai de grâce
+
+```yaml
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - …
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+```
+
+Quand un pod doit s'arrêter (rollout, drain, suppression), Kubernetes fait **deux choses en parallèle** : il le retire des endpoints du Service, et il lance son arrêt. Sans précaution, l'app peut fermer avant que tous les nœuds aient arrêté de lui envoyer du trafic, d'où quelques erreurs.
+
+1. `preStop` → `sleep: 5` : le kubelet **attend 5 s** avant d'envoyer `SIGTERM`. Pendant ce temps, l'app sert normalement, et le retrait des endpoints a le temps de se propager. `sleep` est intégré à Kubernetes : aucun binaire n'est nécessaire dans l'image.
+2. Puis `SIGTERM` : Result arrête d'accepter des connexions, termine les requêtes en cours, et s'arrête au plus tard après 10 s (`server.js`).
+3. `terminationGracePeriodSeconds: 30` : le délai **total**, compté depuis le début du `preStop`. Au-delà, le kubelet envoie `SIGKILL`. 5 s + 10 s, plus une marge : 30 s.
+
+### Répartition sur les nœuds (comme Poll, partie 7)
+
+```yaml
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          matchLabelKeys: ['pod-template-hash']
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: result
+```
+
+- `podAntiAffinity` : « évite les nœuds qui ont déjà un pod qui correspond à `labelSelector` ».
+- `topologyKey: kubernetes.io/hostname` : l'unité de répartition est le **nœud** (chaque nœud a un nom d'hôte différent).
+- `preferred…` + `weight: 100` : c'est une **préférence**, pas une obligation. Pendant un rollout, le 3e pod (surge) doit pouvoir se placer alors qu'il n'y a que 2 nœuds. Avec `required…`, il resterait `Pending` et bloquerait la mise à jour.
+- `IgnoredDuringExecution` : la règle ne s'applique qu'au placement. Un pod déjà lancé n'est jamais déplacé.
+- `matchLabelKeys: ['pod-template-hash']` : ne compter que les pods de **la même version**. Sans ça (constaté sur AKS), pendant un rollout, les anciens pods présents sur les 2 nœuds « occupent » les 2 nœuds, la préférence ne sert plus à rien, et les 2 nouveaux pods finissaient sur le même nœud.
+
 ### Uniquement Postgres
 
 ```yaml
@@ -936,6 +1034,43 @@ Result gère aussi `SIGTERM` proprement : il arrête d'accepter des connexions, 
 
 ---
 
+## 8 bis. `k8s/pdb.yaml`, ligne par ligne
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: poll
+  labels:
+    app.kubernetes.io/name: poll
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: poll
+```
+
+Le même pour `result`, séparé par `---`.
+
+- `policy/v1` : le groupe d'API des règles de disruption.
+- `selector` : les pods concernés, ici les pods Poll.
+- `minAvailable: 1` : au moins **1** pod Poll doit rester disponible pendant une **perturbation volontaire**.
+
+**Volontaire** = demandée : `kubectl drain`, mise à jour des nœuds par AKS. `drain` passe par l'API d'éviction, qui **refuse** une éviction qui ferait passer sous `minAvailable`. `drain` réessaie alors toutes les 5 s, jusqu'à ce qu'un remplaçant soit prêt ailleurs.
+
+**Ce que le PDB ne protège pas** : une panne de nœud ou un `OOMKilled`, qui ne sont pas des évictions.
+
+**Pourquoi seulement Poll et Result** : Redis, Postgres et le worker n'ont qu'un replica. `minAvailable: 1` bloquerait **tous** les drains pour toujours (on le voit avec les PDB d'AKS sur `coredns` et `metrics-server` : `Cannot evict pod as it would violate the pod's disruption budget`, puis nouvel essai).
+
+Le PDB est complémentaire de la stratégie `maxUnavailable: 0`, qui ne s'applique **qu'aux rollouts**, pas aux évictions.
+
+### Questions probables
+
+- _« Différence entre `maxUnavailable` (stratégie) et un PDB ? »_ La stratégie protège les **mises à jour** du Deployment. Le PDB protège les **évictions** (drain, mise à jour de nœuds).
+- _« Pourquoi pas de PDB sur Postgres ? »_ Avec 1 replica, il bloquerait tous les drains. Sa coupure pendant un drain est assumée et documentée.
+
+---
+
 ## 9. Scénarios : ce qui se passe quand…
 
 Pour chaque scénario : ce que fait Kubernetes, ce que voit l'utilisateur, et ce qui reste à améliorer (avec le ticket). État décrit : `main` actuel, avec Poll et Result exposés par des Services `LoadBalancer` (#24 à #26).
@@ -948,7 +1083,7 @@ kubectl apply -k k8s/
 kubectl -n bernstein get pods -w             # suivre le démarrage (Ctrl+C pour quitter)
 ```
 
-1. Kustomize construit les 13 objets (partie 1). Sans `secrets.env`, il s'arrête là.
+1. Kustomize construit les 15 objets (partie 1). Sans `secrets.env`, il s'arrête là.
 2. Tout est créé **en même temps** : aucun ordre garanti.
 3. Postgres attend son disque (quelques dizaines de secondes), puis initialise la base et la table `votes`.
 4. Pendant ce temps, le worker affiche `Waiting for db` et Result réessaie : leur readiness est rouge.
@@ -986,7 +1121,9 @@ t5  ancien : 0                                nouveau : 2
 - Pendant le rollout, des rafraîchissements peuvent alterner entre l'ancienne et la nouvelle couleur : les deux versions servent en même temps. C'est normal.
 - L'ancien ReplicaSet est **gardé avec 0 pod**. C'est lui qui permet le retour en arrière : `kubectl -n bernstein rollout undo deploy/poll`.
 
-**Point faible connu (#28)** : quand un pod reçoit `SIGTERM`, deux choses se passent **en parallèle** : le process commence à s'arrêter, et Kubernetes le retire des endpoints du Service. Si le process s'arrête avant que le retrait ait atteint tous les nœuds, quelques requêtes peuvent encore arriver sur un pod qui ferme, d'où des erreurs. Le correctif est un `preStop` (un `sleep` de quelques secondes avant l'arrêt), puis le test réel du ticket #30.
+Chaque ancien pod passe d'abord **5 s en `preStop`** : il sort des endpoints tout en servant encore, puis il reçoit `SIGTERM` et termine ses requêtes (parties 7 et 8).
+
+**Mesuré sur AKS** : requêtes en continu (toutes les 50 ms) sur les 2 IP publiques pendant `kubectl rollout restart deploy/poll deploy/result` : **0 erreur sur 2461 requêtes**. Le script réutilisable du ticket #29 reste à écrire.
 
 ### 9.3 Changement de config ou de mot de passe
 
@@ -1019,11 +1156,20 @@ kubectl drain <nœud> --ignore-daemonsets --delete-emptydir-data
 2. Tous ses pods sont **évincés**. Leurs contrôleurs les recréent sur l'autre nœud.
 3. Postgres : le disque Azure est détaché du nœud drainé et rattaché à l'autre, ce qui prend 1 à 2 minutes.
 
-**Ce qui coince aujourd'hui** (à corriger avant la soutenance) :
+Ce qui protège Poll et Result :
 
-- **Pas de PodDisruptionBudget (#31)** : `drain` peut évincer les 2 pods Poll ou les 2 pods Result **en même temps** s'ils sont sur ce nœud. La stratégie `maxUnavailable: 0` ne s'applique qu'aux rollouts, **pas aux évictions**. Un PDB `minAvailable: 1` obligerait `drain` à attendre qu'un pod soit recréé ailleurs.
-- **Pas d'anti-affinity (#32)** : les 2 pods Result ont été vus sur le même nœud. Un drain de ce nœud coupe alors la page.
-- Redis et Postgres n'ont qu'un replica : leur pod part forcément. Redis revient en quelques secondes, Postgres en 1 à 2 minutes.
+- **Anti-affinity** : 1 pod de chaque par nœud, donc un drain n'en évince qu'un par app.
+- **PDB** (`minAvailable: 1`) : même si les 2 pods étaient sur le nœud, `drain` attendrait qu'un remplaçant soit prêt ailleurs avant d'évincer le second.
+- **`preStop`** : chaque pod évincé sort du trafic avant de s'arrêter.
+
+**Mesuré sur AKS**, avec des requêtes en continu sur les 2 IP publiques :
+
+| Nœud drainé                              | Poll     | Result                        |
+| ---------------------------------------- | -------- | ----------------------------- |
+| 1 Poll + 1 Result + le worker            | 0 erreur | 0 erreur (2221 requêtes, 8 s) |
+| 1 Poll + 1 Result + **Redis + Postgres** | 0 erreur | **47 échecs pendant 39 s**    |
+
+Le 2e cas est la limite connue : Postgres n'a qu'**un** replica. Pendant que son disque Azure change de nœud, les 2 pods Result sont non ready (leur `/readyz` dépend de la base), et le Service n'a plus de destination. Poll, lui, tient : Redis est revenu avant que sa readiness ne bascule. Seule une base répliquée réglerait ce cas (DECISIONS §7).
 
 Pour remettre le nœud en service : `kubectl uncordon <nœud>`. Les pods ne reviennent pas tout seuls dessus : seuls les **nouveaux** pods y seront placés.
 
@@ -1035,7 +1181,7 @@ Pour remettre le nœud en service : `kubectl uncordon <nœud>`. Les pods ne revi
 | **Postgres**       | Fonctionne, les votes s'empilent dans Redis | Non ready, attend la base            | Non ready, page indisponible |
 | **Worker**         | Fonctionne                                  | —                                    | Fonctionne (scores figés)    |
 
-Après un redémarrage de Postgres, le worker reste non ready jusqu'au vote suivant (partie 6). Aucun vote n'est perdu.
+Après un redémarrage de Postgres, le worker est redémarré par sa liveness et redevient ready en environ 1 minute, sans intervention (partie 6). Aucun vote n'est perdu.
 
 ### 9.7 Monter en charge (scale)
 
