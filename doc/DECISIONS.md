@@ -390,3 +390,27 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 
 - **PDB on Redis, PostgreSQL or the worker:** they have 1 replica. `minAvailable: 1` would block every drain forever; `maxUnavailable: 1` would allow everything and protect nothing. Their short downtime during a drain is documented in sections 7, 9 and 10.
 - **`maxUnavailable: 1` instead of `minAvailable: 1`:** same effect with 2 replicas. `minAvailable` states the goal ("always one serving") directly and stays right if replicas are raised by hand or by the HPA (#33).
+
+---
+
+## 15. Poll: Gunicorn threads (`GUNICORN_CMD_ARGS="--threads 4"`)
+
+**Choice:** `k8s/poll.yaml` sets `GUNICORN_CMD_ARGS="--threads 4"`. The image's command (`gunicorn --workers 2 …`) is unchanged; Gunicorn now runs 2 worker processes with 4 threads each (`gthread` worker) instead of 2 single-threaded `sync` workers.
+
+**Why (measured on AKS):**
+
+- With the image defaults, about **3.5 % of requests to Poll timed out** (3 s, no response), with or without a rollout, through the public IP and from inside the cluster alike. p99 latency was 1.4 s. Result, on Node.js, had 0 errors under the same load.
+- A Poll pod hit directly showed `/readyz` occasionally taking ~4.5 s, while DNS resolution and Redis connections, timed in isolation inside the pod, were always fast. The requests were waiting for a free worker: each `sync` worker handles one connection at a time, so 2 stalled connections leave the pod unable to answer.
+- **Fact:** Gunicorn's sync workers assume a buffering proxy in front of them; without one, slow or idle clients tie up workers, and threaded or async workers are recommended. ([Gunicorn docs: Design, choosing a worker type](https://docs.gunicorn.org/en/stable/design.html#choosing-a-worker-type)) Our clients (browsers, the Azure Load Balancer) reach Gunicorn directly.
+- After the change: **0 errors in 656 requests** over 90 s through the public IP, p99 0.17 s.
+- **Fact:** `GUNICORN_CMD_ARGS` is read by Gunicorn as extra settings; arguments on the command line still win, so `--workers 2` from the image stays. ([Gunicorn docs: Configuration overview](https://docs.gunicorn.org/en/stable/configure.html))
+
+**Cons**
+
+- Threads share one Python process per worker: a CPU-bound request would be limited by the GIL. Poll's requests are I/O-bound (render a template, one `RPUSH`), so it does not matter here.
+- We did not identify which client leaves connections idle (the Azure Load Balancer's TCP health probes are the likely source). Threads fix the symptom whatever the source.
+
+**Alternatives not taken**
+
+- **More sync workers (`--workers 8`):** also works, but each worker is a full Python process (more memory per pod) for the same effect.
+- **Changing the Dockerfile or `app.py`:** the application is provided by the subject; configuring it from the manifest keeps it untouched.
