@@ -47,6 +47,20 @@ spec:
             value: '0'
       # preStop (5 s) + Gunicorn's graceful shutdown (up to 30 s by default), with margin.
       terminationGracePeriodSeconds: 45
+      # Prefer one replica per node, so a node failure or drain never takes both down.
+      # "Preferred", not "required": during a rollout the surge pod (3rd) must still schedule on 2 nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                # Only count pods of the same version: during a rollout, old pods on every node
+                # would otherwise cancel the preference and new pods could pile up on one node.
+                matchLabelKeys: ['pod-template-hash']
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: poll
       containers:
         - name: poll
           # Registry and tag are set by the `images` field of kustomization.yaml.
