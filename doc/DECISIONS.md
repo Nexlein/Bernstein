@@ -352,6 +352,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 
 - Observed before this rule: both Result pods often landed on the same node. Losing or draining that node took the page down even with 2 replicas.
 - **Fact:** with `topologyKey: kubernetes.io/hostname`, each node is its own topology domain, so the rule means "avoid a node that already runs a pod with this label". ([Kubernetes docs: Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity))
+- **`matchLabelKeys: ['pod-template-hash']`:** observed on AKS without it, a rollout put both new Poll pods and both new Result pods on the same node. During the rollout, the old pods (on both nodes) carry the same `app.kubernetes.io/name` label and count for the rule, so no node looks free and the preference has no effect. **Fact:** `matchLabelKeys` adds the incoming pod's value of each listed label to the selector ([Kubernetes docs: Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#matchlabelkeys)); `pod-template-hash` is set by the Deployment per version, so only pods of the same version are counted.
 - **Preferred, not required:** with `maxSurge: 1`, a rollout briefly runs 3 pods on our 2 nodes. A `required` rule would leave the 3rd pod `Pending` and block the rollout. The preferred rule only scores nodes, so the surge pod still schedules.
 
 **Cons**
