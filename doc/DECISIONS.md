@@ -381,6 +381,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 **Cons**
 
 - **Fact:** a PDB only protects against **voluntary** disruptions. A node crash or a pod OOMKill is not stopped by it. ([Kubernetes docs: Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/))
+- **Measured on AKS, under continuous requests to both public IPs:** draining the node with one Poll, one Result and the worker gave **0 errors** (2221 requests, 8 s). Draining the node that also ran **PostgreSQL and Redis** gave 0 errors on Poll but **47 failed requests on Result over 39 s**: PostgreSQL has 1 replica, so while its Azure Disk moves to the other node, both Result pods fail `/readyz` and the Service has no endpoint. A PDB cannot help a single replica; only a replicated database would (section 7).
 - If both replicas sit on the node being drained (anti-affinity is only preferred), the drain evicts one, waits until its replacement is Ready elsewhere, then evicts the other. Slower, but no outage.
 
 **Alternatives not taken**
