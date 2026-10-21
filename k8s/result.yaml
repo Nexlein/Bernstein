@@ -55,6 +55,9 @@ spec:
             - weight: 100
               podAffinityTerm:
                 topologyKey: kubernetes.io/hostname
+                # Only count pods of the same version: during a rollout, old pods on every node
+                # would otherwise cancel the preference and new pods could pile up on one node.
+                matchLabelKeys: ['pod-template-hash']
                 labelSelector:
                   matchLabels:
                     app.kubernetes.io/name: result
