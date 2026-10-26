@@ -16,6 +16,9 @@ Summary:
 | Secrets       | Kustomize `secretGenerator` from a gitignored `k8s/secrets.env`                         |
 | Database      | PostgreSQL `StatefulSet` (1 replica) on an Azure Disk PVC, `ClusterIP` Service          |
 | Result        | `Deployment`, 2 fixed replicas, no HPA, non-root with a read-only root filesystem       |
+| Queue         | Redis `Deployment` (1 replica), in-memory only, `ClusterIP` Service                     |
+| Worker        | `Deployment` (1 replica), no Service, probes check Redis and PostgreSQL                 |
+| Poll          | `Deployment`, 2 replicas, read-only root filesystem with an in-memory `/tmp`            |
 
 Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/cluster-setup.md).
 
@@ -120,6 +123,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 
 - Two public IPs instead of one. Each Standard public IP is billed per hour ([Azure: IP address pricing](https://azure.microsoft.com/pricing/details/ip-addresses/)). Small compared to the nodes.
 - No host/path routing and no TLS termination. Not required by the subject.
+- We keep the default `externalTrafficPolicy: Cluster`: every node accepts the traffic and kube-proxy forwards it to a ready pod, possibly on the other node (one extra hop), and the app sees a node IP instead of the visitor's IP. **Fact:** `Local` keeps the client IP but only sends traffic to nodes that run a ready pod of the Service. ([Kubernetes docs: Preserving the client source IP](https://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/#preserving-the-client-source-ip)) With `Local`, a node whose pods are being replaced keeps receiving traffic until the Azure health probe notices, a risk during rollouts that buys us nothing: the apps do not use the client IP.
 - Zero downtime still depends on us: during a rollout, a terminating pod can receive traffic until its endpoint is removed everywhere. We handle this with readiness probes, a `preStop` sleep and `maxUnavailable: 0` (issues #27, #28). **Fact:** endpoint removal and the `SIGTERM` happen in parallel. ([Kubernetes docs: Pod termination](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination))
 
 **Alternatives not taken**
@@ -195,7 +199,7 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **Fact:** A StatefulSet gives each pod a stable identity and its own PVC from `volumeClaimTemplates`. The PVC is kept when the pod is deleted or rescheduled, and the new pod mounts the same volume. ([Kubernetes docs: StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)) Votes survive a pod restart, a node drain or a `kubectl rollout restart`.
 - **Fact:** By default, deleting or scaling down a StatefulSet does not delete its PVCs (`persistentVolumeClaimRetentionPolicy` defaults to `Retain`). ([same source](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#persistentvolumeclaim-retention)) Deleting or re-applying the StatefulSet keeps the data. **Careful:** `kubectl delete -k k8s/` also deletes the `bernstein` namespace, hence the PVC, and the AKS `default` storage class has `reclaimPolicy: Delete`, so the disk goes with it.
 - `ClusterIP` only: the database has no public IP. Only pods in the cluster reach it, through the `postgres` DNS name used in `POSTGRES_HOST`.
-- Non-root (uid 70, `fsGroup: 70` so the disk is writable for that user), with `allowPrivilegeEscalation: false`.
+- Non-root (uid 70, `fsGroup: 70` so the disk is writable for that user), with `allowPrivilegeEscalation: false` and all Linux capabilities dropped: running as uid 70 from the start, the entrypoint never needs `chown` or `setuid`.
 - Same image as `docker-compose.yml`: what CI tests locally is what runs on the cluster.
 - **Schema:** `schema.sql` is mounted from the `postgres-init` ConfigMap into `/docker-entrypoint-initdb.d`. **Fact:** the image runs the `*.sql` files found there on its first start, when the data directory is empty. ([postgres image docs: Initialization scripts](https://hub.docker.com/_/postgres)) A fresh deploy gets the `votes` table with no manual step, exactly like `docker-compose.yml`. The script uses `CREATE TABLE IF NOT EXISTS`, so running it again cannot fail.
 
@@ -279,12 +283,14 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **1 replica is enough and saves node RAM:** The Worker runs on a Java 25 JVM (`eclipse-temurin:25-jre`), which has a larger memory footprint than Python or Node.js (`requests: 192Mi`, `limits: 384Mi`). Each vote is one `BLPOP` and one single-row upsert, so a single instance keeps up with far more votes than a demo produces (tested on AKS: a vote pushed to Redis is in PostgreSQL within a second).
 - **Safe rollout overlap (`maxSurge: 1`, `maxUnavailable: 0`):** During a rolling update, the new Worker pod starts and must pass `/readyz` for `minReadySeconds: 5` before the old pod is terminated, so two workers briefly consume the queue in parallel. **Fact:** `BLPOP` is atomic and delivers each popped element to a single blocked client ([Redis docs: BLPOP](https://redis.io/docs/latest/commands/blpop/)), and the PostgreSQL `INSERT ... ON CONFLICT (id) DO UPDATE` statement is idempotent, so two concurrent workers never duplicate a vote.
 - **No `Service` resource:** No user or cluster component connects to the Worker; it only opens outbound TCP connections to `redis:6379` and `postgres:5432`. Only the kubelet reaches port 80 on the pod IP to run `/healthz` and `/readyz` probes. Omitting the `Service` avoids exposing an unused cluster endpoint.
-- **Probes match the dual dependency:** `/healthz` answers `200` as soon as the embedded HTTP server starts, so a temporary Redis or PostgreSQL outage does not trigger a restart loop while `connectToRedis` / `connectToDB` retry. `/readyz` pings Redis and runs `dbConn.isValid(2)` on PostgreSQL, so a new pod in a rollout only replaces the old pod once both backing stores are connected.
+- **Probes match the dual dependency:** `/readyz` pings Redis and runs `dbConn.isValid(2)` on PostgreSQL, so a new pod in a rollout only replaces the old pod once both backing stores are connected.
+- **Liveness also on `/readyz`, unlike Poll and Result (#63):** observed on AKS, after PostgreSQL restarted the worker stayed not ready (`0/1`) for as long as no vote arrived: its JDBC connection was dead, but `Worker.java` only notices it when it writes, and `/healthz` kept answering 200. With liveness on `/readyz` (`initialDelaySeconds: 30`, `periodSeconds: 10`, `failureThreshold: 6`), the kubelet restarts it after about a minute and it reconnects by itself. Restarting is harmless here: the worker has no Service and no users, and a vote popped mid-failure is pushed back with `LPUSH` before the process exits. Poll and Result keep liveness on `/healthz`: restarting them during a database or Redis outage would cut their users for nothing.
 - **Hardening:** Explicit `runAsUser: 10001` (matching the `app` user in `worker/Dockerfile`), `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, and `capabilities.drop: ["ALL"]`.
 
 **Cons**
 
 - **Brief pause on unexpected pod crash or node drain:** With 1 replica, if the node hosting the Worker is drained or crashes, vote processing pauses for a few seconds until the replacement pod starts. Votes are not lost: Poll keeps pushing them to the Redis list, and the new Worker drains the backlog as soon as it connects.
+- **Restarts during a long outage:** with liveness on `/readyz`, a PostgreSQL or Redis outage longer than about a minute makes the worker restart repeatedly (with Kubernetes' growing back-off, up to 5 min). Harmless, but the `RESTARTS` counter grows; it is expected, not a bug.
 - **No `SIGTERM` shutdown hook in `Worker.java`:** If `updateVote` fails with a `SQLException`, the worker pushes the vote back to Redis with `LPUSH`. However, if the JVM receives `SIGTERM` during the sub-millisecond window between `BLPOP` returning a vote and `executeUpdate()` committing it, the process exits before the upsert finishes and that single vote is lost (most of the time the worker is idle inside `BLPOP`, where nothing has been popped yet).
 - **Order is not guaranteed during the rollout overlap:** while two workers run, a voter who changes their vote twice within a few milliseconds could see the older vote committed last, since each worker upserts independently. Only possible during the few seconds of a worker rollout, and the voter can simply vote again.
 
@@ -317,3 +323,97 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **1 replica:** A rollout or node drain would drop user requests.
 - **`readOnlyRootFilesystem: false`:** Easier for Gunicorn's `/tmp` files, but leaves the application filesystem writable if compromised.
 - **Setting `OPTION_A..D` in `app-config`:** Defaults (`Ansible`, `Chef`, `Puppet`, `SaltStack`) are already defined in `app.py` and hardcoded in Result's `index.html`; overriding them only in Poll's environment would desynchronize Poll and Result labels.
+
+---
+
+## 12. Graceful shutdown: `preStop` sleep and grace period
+
+**Choice:** Poll and Result get `lifecycle.preStop.sleep.seconds: 5`. Poll's `terminationGracePeriodSeconds` is 45, Result's is 30.
+
+**Pros**
+
+- **Fact:** When a pod is deleted, Kubernetes removes it from the Service endpoints and starts its shutdown **in parallel**; the `preStop` hook runs first, and `SIGTERM` is only sent once it returns. ([Kubernetes docs: Pod termination](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)) Without a pause, the app could close its socket while kube-proxy on some node still routes new connections to it, which shows up as errors during a rollout or a drain. The 5 s sleep lets every node drop the pod from its rules while the pod keeps serving normally.
+- **Fact:** `sleep` is a built-in hook handler: the kubelet waits, no `sleep` binary is needed in the image. ([Kubernetes docs: Container lifecycle hooks](https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/#hook-handler-implementations)) It works the same with our read-only root filesystems.
+- **Grace periods sized to each app:** the grace period counts from the start of `preStop`. Poll: 5 s + Gunicorn's graceful shutdown (its `graceful_timeout` defaults to 30 s) → 45 s. Result: 5 s + its own drain on `SIGTERM` (at most 10 s in `server.js`) → 30 s. After that, the kubelet sends `SIGKILL`.
+
+**Cons**
+
+- Every rollout and drain takes about 5 s longer per pod.
+- 5 s is an estimate of endpoint propagation on a 2-node cluster, not a guarantee. The zero-downtime test (#29, #30) is what proves it.
+
+**Alternatives not taken**
+
+- **No `preStop`:** relies on the endpoint removal winning the race against the app's shutdown. Fine most of the time, not always.
+- **`exec: ["sleep", "5"]`:** same effect, but needs a `sleep` binary in every image. The built-in handler does not.
+- **A longer sleep (15-30 s):** safer margin, but every rollout of 2 pods would last much longer for no measured gain.
+
+---
+
+## 13. Spreading Poll and Result over the nodes: preferred anti-affinity
+
+**Choice:** Poll and Result have a `podAntiAffinity` rule, `preferredDuringSchedulingIgnoredDuringExecution` with weight 100 on `topologyKey: kubernetes.io/hostname`: the scheduler tries to put the 2 replicas of each app on different nodes.
+
+**Pros**
+
+- Observed before this rule: both Result pods often landed on the same node. Losing or draining that node took the page down even with 2 replicas.
+- **Fact:** with `topologyKey: kubernetes.io/hostname`, each node is its own topology domain, so the rule means "avoid a node that already runs a pod with this label". ([Kubernetes docs: Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity))
+- **`matchLabelKeys: ['pod-template-hash']`:** observed on AKS without it, a rollout put both new Poll pods and both new Result pods on the same node. During the rollout, the old pods (on both nodes) carry the same `app.kubernetes.io/name` label and count for the rule, so no node looks free and the preference has no effect. **Fact:** `matchLabelKeys` adds the incoming pod's value of each listed label to the selector ([Kubernetes docs: Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#matchlabelkeys)); `pod-template-hash` is set by the Deployment per version, so only pods of the same version are counted.
+- **Preferred, not required:** with `maxSurge: 1`, a rollout briefly runs 3 pods on our 2 nodes. A `required` rule would leave the 3rd pod `Pending` and block the rollout. The preferred rule only scores nodes, so the surge pod still schedules.
+
+**Cons**
+
+- "Preferred" is not a guarantee: if one node is full or down, both replicas can still end up on the other one.
+- **Fact:** `IgnoredDuringExecution`: the rule is only applied when a pod is scheduled; pods already running are not moved. After a node comes back, the spread is restored at the next rollout or restart, not by itself.
+
+**Alternatives not taken**
+
+- **`requiredDuringScheduling…`:** strict spread, but blocks rollouts on 2 nodes (see above) and makes a single-node outage leave a replica `Pending`.
+- **`topologySpreadConstraints` (`maxSkew: 1`, `whenUnsatisfiable: ScheduleAnyway`):** same result here and more flexible for many nodes or zones. Anti-affinity is simpler to read for 2 replicas on 2 nodes.
+- **Zones:** our nodes have no availability zones (section 1), so spreading over zones is not possible.
+
+---
+
+## 14. PodDisruptionBudgets for Poll and Result
+
+**Choice:** `k8s/pdb.yaml` defines a `PodDisruptionBudget` with `minAvailable: 1` for Poll and one for Result. Redis, PostgreSQL and the worker have none.
+
+**Pros**
+
+- **Fact:** `kubectl drain` evicts pods through the Eviction API, which refuses an eviction that would break a PodDisruptionBudget; `drain` then retries until the eviction is allowed. ([Kubernetes docs: Safely drain a node](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/)) With `minAvailable: 1`, a drain can only remove a Poll or Result pod while another one is available, so the page never goes to zero pods.
+- The rollout settings (`maxUnavailable: 0`) only apply to rollouts, not to evictions. The PDB covers the other case: drains, node image upgrades and cluster upgrades on AKS, which also use evictions.
+- Works with the anti-affinity (section 13): the 2 replicas are on different nodes, so draining one node evicts at most one pod per app, and the PDB is satisfied right away.
+
+**Cons**
+
+- **Fact:** a PDB only protects against **voluntary** disruptions. A node crash or a pod OOMKill is not stopped by it. ([Kubernetes docs: Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/))
+- **Measured on AKS, under continuous requests to both public IPs:** draining the node with one Poll, one Result and the worker gave **0 errors** (2221 requests, 8 s). Draining the node that also ran **PostgreSQL and Redis** gave 0 errors on Poll but **47 failed requests on Result over 39 s**: PostgreSQL has 1 replica, so while its Azure Disk moves to the other node, both Result pods fail `/readyz` and the Service has no endpoint. A PDB cannot help a single replica; only a replicated database would (section 7).
+- If both replicas sit on the node being drained (anti-affinity is only preferred), the drain evicts one, waits until its replacement is Ready elsewhere, then evicts the other. Slower, but no outage.
+
+**Alternatives not taken**
+
+- **PDB on Redis, PostgreSQL or the worker:** they have 1 replica. `minAvailable: 1` would block every drain forever; `maxUnavailable: 1` would allow everything and protect nothing. Their short downtime during a drain is documented in sections 7, 9 and 10.
+- **`maxUnavailable: 1` instead of `minAvailable: 1`:** same effect with 2 replicas. `minAvailable` states the goal ("always one serving") directly and stays right if replicas are raised by hand or by the HPA (#33).
+
+---
+
+## 15. Poll: Gunicorn threads (`GUNICORN_CMD_ARGS="--threads 4"`)
+
+**Choice:** `k8s/poll.yaml` sets `GUNICORN_CMD_ARGS="--threads 4"`. The image's command (`gunicorn --workers 2 …`) is unchanged; Gunicorn now runs 2 worker processes with 4 threads each (`gthread` worker) instead of 2 single-threaded `sync` workers.
+
+**Why (measured on AKS):**
+
+- With the image defaults, about **3.5 % of requests to Poll timed out** (3 s, no response), with or without a rollout, through the public IP and from inside the cluster alike. p99 latency was 1.4 s. Result, on Node.js, had 0 errors under the same load.
+- A Poll pod hit directly showed `/readyz` occasionally taking ~4.5 s, while DNS resolution and Redis connections, timed in isolation inside the pod, were always fast. The requests were waiting for a free worker: each `sync` worker handles one connection at a time, so 2 stalled connections leave the pod unable to answer.
+- **Fact:** Gunicorn's sync workers assume a buffering proxy in front of them; without one, slow or idle clients tie up workers, and threaded or async workers are recommended. ([Gunicorn docs: Design, choosing a worker type](https://docs.gunicorn.org/en/stable/design.html#choosing-a-worker-type)) Our clients (browsers, the Azure Load Balancer) reach Gunicorn directly.
+- After the change: **0 errors in 656 requests** over 90 s through the public IP, p99 0.17 s.
+- **Fact:** `GUNICORN_CMD_ARGS` is read by Gunicorn as extra settings; arguments on the command line still win, so `--workers 2` from the image stays. ([Gunicorn docs: Configuration overview](https://docs.gunicorn.org/en/stable/configure.html))
+
+**Cons**
+
+- Threads share one Python process per worker: a CPU-bound request would be limited by the GIL. Poll's requests are I/O-bound (render a template, one `RPUSH`), so it does not matter here.
+- We did not identify which client leaves connections idle (the Azure Load Balancer's TCP health probes are the likely source). Threads fix the symptom whatever the source.
+
+**Alternatives not taken**
+
+- **More sync workers (`--workers 8`):** also works, but each worker is a full Python process (more memory per pod) for the same effect.
+- **Changing the Dockerfile or `app.py`:** the application is provided by the subject; configuring it from the manifest keeps it untouched.

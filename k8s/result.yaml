@@ -1,4 +1,21 @@
 # Result: Node.js front end showing the vote counts, read from PostgreSQL.
+# Public entry point: Azure gives this Service its own public IP (EXTERNAL-IP).
+# Layer 4 (TCP) load balancing, so the WebSocket used for live scores passes through as is.
+apiVersion: v1
+kind: Service
+metadata:
+  name: result
+  labels:
+    app.kubernetes.io/name: result
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: result
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -28,6 +45,22 @@ spec:
           # Lets the non-root user (uid 1000 in the image) listen on port 80.
           - name: net.ipv4.ip_unprivileged_port_start
             value: '0'
+      # preStop (5 s) + Result's own drain on SIGTERM (at most 10 s, see server.js), with margin.
+      terminationGracePeriodSeconds: 30
+      # Prefer one replica per node, so a node failure or drain never takes both down.
+      # "Preferred", not "required": during a rollout the surge pod (3rd) must still schedule on 2 nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                # Only count pods of the same version: during a rollout, old pods on every node
+                # would otherwise cancel the preference and new pods could pile up on one node.
+                matchLabelKeys: ['pod-template-hash']
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: result
       containers:
         - name: result
           # Registry and tag are set by the `images` field of kustomization.yaml.
@@ -60,6 +93,12 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 2
+          # On shutdown, keep serving 5 s while the pod is removed from the Service endpoints
+          # on every node; only then does the container receive SIGTERM.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           resources:
             requests:
               cpu: 50m
