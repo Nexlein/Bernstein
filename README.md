@@ -71,55 +71,9 @@ flowchart TD
 
 ---
 
-## Quickstart & Local Testing
+## Local Development
 
-### 1. Prerequisites
-
-- Docker & Docker Compose (v2+)
-- Node.js (v22+)
-
-### 2. Team Setup & Git Hooks
-
-Install root development tools (Husky pre-commit hooks and Prettier):
-
-```bash
-npm install
-```
-
-_Note: Git hooks will automatically bind upon running `npm install` via Husky._
-
-### 3. Launch Local Multi-Service Stack
-
-Run the entire 5-tier voting stack locally:
-
-```bash
-# Start all containers in the background with health checks
-docker compose up -d
-
-# Check live logs
-docker compose logs -f
-```
-
-- **Poll Web UI**: [http://localhost:5000](http://localhost:5000)
-- **Result Web UI**: [http://localhost:5001](http://localhost:5001)
-
-### 4. Verify Health Probes
-
-```bash
-# Poll probes
-curl http://localhost:5000/healthz   # 200 OK
-curl http://localhost:5000/readyz    # 200 OK if Redis is up
-
-# Result probes
-curl http://localhost:5001/healthz   # 200 OK
-curl http://localhost:5001/readyz    # 200 OK if PostgreSQL is up
-```
-
-### 5. Tear Down
-
-```bash
-docker compose down -v
-```
+Run the 5 services locally with Docker Compose, install the Git hooks and use the repo commands: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
@@ -153,54 +107,17 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 ## Project Structure
 
 ```
-├── .claude/                  # AI agent configuration & token-saving code map
-│   ├── codemap.md            # Auto-generated services map + file tree
-│   └── settings.json         # Claude permissions & read denials
-├── .github/
-│   ├── dependabot.yml        # Weekly automated dependency checks
-│   └── workflows/
-│       ├── ci.yml            # Linting, Docker build matrix & integration tests
-│       └── mirror.yml        # Automatic mirror to official Epitech repository
-├── .husky/                   # Version-controlled Git pre-commit hooks
-├── k8s/                      # Kustomize manifests (kubectl apply -k k8s/)
-│   ├── kustomization.yaml    # Entry point: namespace, images, ConfigMaps, Secret
-│   ├── namespace.yaml        # The bernstein namespace
-│   ├── postgres.yaml         # PostgreSQL StatefulSet + PVC + ClusterIP Service
-│   ├── redis.yaml            # Redis Deployment + ClusterIP Service
-│   ├── worker.yaml           # Worker Deployment
-│   ├── poll.yaml             # Poll Deployment (2 replicas)
-│   ├── result.yaml           # Result Deployment (2 replicas)
-│   ├── pdb.yaml              # PodDisruptionBudgets for Poll and Result
-│   ├── schema.sql            # Copy of poll-application/schema.sql (checked by CI)
-│   └── secrets.env.example   # Template for the Kubernetes Secret (copy to secrets.env)
-├── doc/
-│   ├── adr/                  # Architecture Decision Records: one file per technical choice
-│   ├── defense/              # Defense preparation (study guide, in French)
-│   ├── setup/                # Step-by-step AKS cluster & ACR registry setup guide
-│   └── subject/              # Official Epitech project PDF & markdown specifications
-├── poll-application/         # Source code & Dockerfiles for the 3 services
-│   ├── poll/                 # Flask / Python 3.14 voting app
-│   ├── result/               # Express / Node.js 24 realtime result app
-│   ├── worker/               # Java 25 Maven background worker
-│   └── schema.sql            # PostgreSQL database initial schema
-├── scripts/
-│   └── codemap.mjs           # Automated code map generator script
-├── docker-compose.yml        # Local development and CI integration compose file
-├── .env.example              # Template for environment variables
-├── CLAUDE.md                 # Agent instructions, architecture & guardrails
-└── package.json              # Development scripts (format, codemap, husky)
+├── .claude/              # Agent settings and the generated code map
+├── .github/              # CI, Epitech mirror, Dependabot, PR template
+├── .husky/               # Pre-commit hook (regenerates the code map)
+├── doc/                  # ADRs, cluster setup guide, defense study guide, subject
+├── k8s/                  # Kustomize manifests (kubectl apply -k k8s/)
+├── poll-application/     # Provided source code and Dockerfiles: Poll, Result, Worker
+├── scripts/              # Code map generator
+├── docker-compose.yml    # Local 5-service stack, also used by CI
+├── CONTRIBUTING.md       # Local development and repo commands
+└── CLAUDE.md             # Agent instructions and project rules
 ```
-
----
-
-## Development & CI/CD Commands
-
-| Command                 | Action                                                                      |
-| ----------------------- | --------------------------------------------------------------------------- |
-| `npm run codemap`       | Regenerates `.claude/codemap.md` (services, routes, env vars, file tree).   |
-| `npm run format:check`  | Checks code and markdown formatting across the entire repo.                 |
-| `npm run format`        | Automatically formats all code, manifests, and documentation with Prettier. |
-| `docker compose config` | Validates local Docker Compose file syntax.                                 |
 
 ---
 
