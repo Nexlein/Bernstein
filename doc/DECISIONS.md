@@ -344,3 +344,27 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **No `preStop`:** relies on the endpoint removal winning the race against the app's shutdown. Fine most of the time, not always.
 - **`exec: ["sleep", "5"]`:** same effect, but needs a `sleep` binary in every image. The built-in handler does not.
 - **A longer sleep (15-30 s):** safer margin, but every rollout of 2 pods would last much longer for no measured gain.
+
+---
+
+## 13. Spreading Poll and Result over the nodes: preferred anti-affinity
+
+**Choice:** Poll and Result have a `podAntiAffinity` rule, `preferredDuringSchedulingIgnoredDuringExecution` with weight 100 on `topologyKey: kubernetes.io/hostname`: the scheduler tries to put the 2 replicas of each app on different nodes.
+
+**Pros**
+
+- Observed before this rule: both Result pods often landed on the same node. Losing or draining that node took the page down even with 2 replicas.
+- **Fact:** with `topologyKey: kubernetes.io/hostname`, each node is its own topology domain, so the rule means "avoid a node that already runs a pod with this label". ([Kubernetes docs: Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity))
+- **`matchLabelKeys: ['pod-template-hash']`:** observed on AKS without it, a rollout put both new Poll pods and both new Result pods on the same node. During the rollout, the old pods (on both nodes) carry the same `app.kubernetes.io/name` label and count for the rule, so no node looks free and the preference has no effect. **Fact:** `matchLabelKeys` adds the incoming pod's value of each listed label to the selector ([Kubernetes docs: Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#matchlabelkeys)); `pod-template-hash` is set by the Deployment per version, so only pods of the same version are counted.
+- **Preferred, not required:** with `maxSurge: 1`, a rollout briefly runs 3 pods on our 2 nodes. A `required` rule would leave the 3rd pod `Pending` and block the rollout. The preferred rule only scores nodes, so the surge pod still schedules.
+
+**Cons**
+
+- "Preferred" is not a guarantee: if one node is full or down, both replicas can still end up on the other one.
+- **Fact:** `IgnoredDuringExecution`: the rule is only applied when a pod is scheduled; pods already running are not moved. After a node comes back, the spread is restored at the next rollout or restart, not by itself.
+
+**Alternatives not taken**
+
+- **`requiredDuringScheduling…`:** strict spread, but blocks rollouts on 2 nodes (see above) and makes a single-node outage leave a replica `Pending`.
+- **`topologySpreadConstraints` (`maxSkew: 1`, `whenUnsatisfiable: ScheduleAnyway`):** same result here and more flexible for many nodes or zones. Anti-affinity is simpler to read for 2 replicas on 2 nodes.
+- **Zones:** our nodes have no availability zones (section 1), so spreading over zones is not possible.
