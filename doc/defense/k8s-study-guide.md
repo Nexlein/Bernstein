@@ -1,6 +1,6 @@
 # Guide d'étude Kubernetes (préparation soutenance)
 
-Support de révision : ce que `kubectl apply -k k8s/` crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans [`DECISIONS.md`](../DECISIONS.md) ; ce guide explique le **comment**.
+Support de révision : ce que `kubectl apply -k k8s/` crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans les [ADR](../adr/README.md) (un fichier par choix) ; ce guide explique le **comment**.
 
 Méthode conseillée : lire une partie, puis fermer le guide et réexpliquer le fichier à voix haute, ligne par ligne. Chaque partie se termine par des questions probables en soutenance.
 
@@ -816,7 +816,7 @@ pod poll, port 80 → Gunicorn → Flask
 
 Le load balancing se fait donc **à 2 niveaux** : Azure répartit entre les **nœuds**, kube-proxy répartit entre les **pods**.
 
-**`externalTrafficPolicy`** : non écrit, donc à sa valeur par défaut, `Cluster`. Chaque nœud accepte le trafic, même s'il n'a pas de pod Poll, et kube-proxy le fait suivre (1 saut de plus possible). L'app voit l'IP d'un nœud, pas celle du visiteur. L'autre valeur, `Local`, garde l'IP du visiteur, mais n'envoie qu'aux nœuds qui ont un pod ready. Pendant une mise à jour, Azure continuerait alors d'envoyer vers un nœud dont les pods partent, jusqu'à ce que sa sonde s'en rende compte. Nos apps n'utilisent pas l'IP du visiteur : `Cluster` est plus sûr (DECISIONS §4).
+**`externalTrafficPolicy`** : non écrit, donc à sa valeur par défaut, `Cluster`. Chaque nœud accepte le trafic, même s'il n'a pas de pod Poll, et kube-proxy le fait suivre (1 saut de plus possible). L'app voit l'IP d'un nœud, pas celle du visiteur. L'autre valeur, `Local`, garde l'IP du visiteur, mais n'envoie qu'aux nœuds qui ont un pod ready. Pendant une mise à jour, Azure continuerait alors d'envoyer vers un nœud dont les pods partent, jusqu'à ce que sa sonde s'en rende compte. Nos apps n'utilisent pas l'IP du visiteur : `Cluster` est plus sûr ([ADR 0004](../adr/0004-public-access-loadbalancer.md)).
 
 ### 2 replicas
 
@@ -927,9 +927,9 @@ Résultat : tout le système de fichiers est en lecture seule, **sauf** `/tmp`, 
 ### Questions probables
 
 - _« Qui fait le load balancing ? »_ Deux niveaux : le load balancer Azure entre les nœuds, puis kube-proxy entre les pods ready du Service.
-- _« Pourquoi pas d'Ingress ? »_ 2 IP publiques répondent directement au sujet, sans composant à installer. ingress-nginx n'est plus maintenu (DECISIONS §4).
+- _« Pourquoi pas d'Ingress ? »_ 2 IP publiques répondent directement au sujet, sans composant à installer. ingress-nginx n'est plus maintenu ([ADR 0004](../adr/0004-public-access-loadbalancer.md)).
 - _« Comment savoir quel pod a répondu ? »_ La page affiche `Processed by container ID <nom du pod>`. Une boucle `curl` montre l'alternance entre les 2 pods. Un F5 dans le navigateur peut retomber sur le même pod, car la connexion reste ouverte (keep-alive).
-- _« Pourquoi un HPA sur Poll et pas sur Result ? »_ Chaque vote est une requête courte : plus de pods, c'est plus de capacité. Result, lui, garde des WebSockets ouverts (#33, DECISIONS §8).
+- _« Pourquoi un HPA sur Poll et pas sur Result ? »_ Chaque vote est une requête courte : plus de pods, c'est plus de capacité. Result, lui, garde des WebSockets ouverts (#33, [ADR 0008](../adr/0008-result-deployment.md)).
 - _« Pourquoi `/tmp` en mémoire ? »_ Pour garder le système de fichiers en lecture seule tout en laissant Gunicorn écrire ses fichiers, sans dépendre de la vitesse du disque.
 
 ---
@@ -1169,7 +1169,7 @@ Ce qui protège Poll et Result :
 | 1 Poll + 1 Result + le worker            | 0 erreur | 0 erreur (2221 requêtes, 8 s) |
 | 1 Poll + 1 Result + **Redis + Postgres** | 0 erreur | **47 échecs pendant 39 s**    |
 
-Le 2e cas est la limite connue : Postgres n'a qu'**un** replica. Pendant que son disque Azure change de nœud, les 2 pods Result sont non ready (leur `/readyz` dépend de la base), et le Service n'a plus de destination. Poll, lui, tient : Redis est revenu avant que sa readiness ne bascule. Seule une base répliquée réglerait ce cas (DECISIONS §7).
+Le 2e cas est la limite connue : Postgres n'a qu'**un** replica. Pendant que son disque Azure change de nœud, les 2 pods Result sont non ready (leur `/readyz` dépend de la base), et le Service n'a plus de destination. Poll, lui, tient : Redis est revenu avant que sa readiness ne bascule. Seule une base répliquée réglerait ce cas ([ADR 0007](../adr/0007-postgres-statefulset.md)).
 
 Pour remettre le nœud en service : `kubectl uncordon <nœud>`. Les pods ne reviennent pas tout seuls dessus : seuls les **nouveaux** pods y seront placés.
 
