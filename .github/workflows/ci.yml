@@ -35,6 +35,9 @@ jobs:
           node scripts/codemap.mjs
           git diff --exit-code .claude/codemap.md || (echo "ERROR: .claude/codemap.md is outdated. Run 'npm run codemap' and commit the changes." && exit 1)
 
+      - name: Lint Shell Scripts
+        run: git ls-files -z '*.sh' | xargs -0 -r shellcheck
+
       - name: Validate Docker Compose Configuration
         run: docker compose config --quiet
 
