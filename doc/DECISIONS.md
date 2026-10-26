@@ -368,3 +368,26 @@ Step-by-step setup and lifecycle commands: [`doc/setup/cluster-setup.md`](setup/
 - **`requiredDuringScheduling…`:** strict spread, but blocks rollouts on 2 nodes (see above) and makes a single-node outage leave a replica `Pending`.
 - **`topologySpreadConstraints` (`maxSkew: 1`, `whenUnsatisfiable: ScheduleAnyway`):** same result here and more flexible for many nodes or zones. Anti-affinity is simpler to read for 2 replicas on 2 nodes.
 - **Zones:** our nodes have no availability zones (section 1), so spreading over zones is not possible.
+
+---
+
+## 14. PodDisruptionBudgets for Poll and Result
+
+**Choice:** `k8s/pdb.yaml` defines a `PodDisruptionBudget` with `minAvailable: 1` for Poll and one for Result. Redis, PostgreSQL and the worker have none.
+
+**Pros**
+
+- **Fact:** `kubectl drain` evicts pods through the Eviction API, which refuses an eviction that would break a PodDisruptionBudget; `drain` then retries until the eviction is allowed. ([Kubernetes docs: Safely drain a node](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/)) With `minAvailable: 1`, a drain can only remove a Poll or Result pod while another one is available, so the page never goes to zero pods.
+- The rollout settings (`maxUnavailable: 0`) only apply to rollouts, not to evictions. The PDB covers the other case: drains, node image upgrades and cluster upgrades on AKS, which also use evictions.
+- Works with the anti-affinity (section 13): the 2 replicas are on different nodes, so draining one node evicts at most one pod per app, and the PDB is satisfied right away.
+
+**Cons**
+
+- **Fact:** a PDB only protects against **voluntary** disruptions. A node crash or a pod OOMKill is not stopped by it. ([Kubernetes docs: Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/))
+- **Measured on AKS, under continuous requests to both public IPs:** draining the node with one Poll, one Result and the worker gave **0 errors** (2221 requests, 8 s). Draining the node that also ran **PostgreSQL and Redis** gave 0 errors on Poll but **47 failed requests on Result over 39 s**: PostgreSQL has 1 replica, so while its Azure Disk moves to the other node, both Result pods fail `/readyz` and the Service has no endpoint. A PDB cannot help a single replica; only a replicated database would (section 7).
+- If both replicas sit on the node being drained (anti-affinity is only preferred), the drain evicts one, waits until its replacement is Ready elsewhere, then evicts the other. Slower, but no outage.
+
+**Alternatives not taken**
+
+- **PDB on Redis, PostgreSQL or the worker:** they have 1 replica. `minAvailable: 1` would block every drain forever; `maxUnavailable: 1` would allow everything and protect nothing. Their short downtime during a drain is documented in sections 7, 9 and 10.
+- **`maxUnavailable: 1` instead of `minAvailable: 1`:** same effect with 2 replicas. `minAvailable` states the goal ("always one serving") directly and stays right if replicas are raised by hand or by the HPA (#33).
