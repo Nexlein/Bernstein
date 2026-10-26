@@ -74,6 +74,11 @@ spec:
           env:
             - name: HOME
               value: /tmp
+            # The image starts 2 sync workers: one stalled connection blocks a whole worker, and
+            # measured ~3.5% of requests timed out. With threads, Gunicorn switches to gthread
+            # (2 workers x 4 threads). Read from the env, so the provided Dockerfile stays untouched.
+            - name: GUNICORN_CMD_ARGS
+              value: '--threads 4'
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
