@@ -16,10 +16,11 @@ redis, postgres: see `docker-compose.yml` (internal only).
 
 - `.claude/`: settings.json
 - `./`: .env.example, .gitignore, .prettierignore, .prettierrc, CLAUDE.md, README.md, docker-compose.yml, package.json
-- `.github/`: dependabot.yml
+- `.github/`: dependabot.yml, pull_request_template.md
 - `.github/workflows/`: ci.yml, mirror.yml
 - `.husky/`: pre-commit
-- `doc/`: DECISIONS.md, k8s-study-guide.md
+- `doc/`: DECISIONS.md
+- `doc/defense/`: k8s-study-guide.md
 - `doc/setup/`: cluster-setup.md
 - `doc/subject/`: README.md, SUBJECT.md
 - `k8s/`: kustomization.yaml, namespace.yaml, pdb.yaml, poll.yaml, postgres.yaml, redis.yaml, result.yaml, schema.sql, secrets.env.example, worker.yaml

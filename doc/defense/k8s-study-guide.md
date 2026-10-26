@@ -1,6 +1,6 @@
 # Guide d'étude Kubernetes (préparation soutenance)
 
-Support de révision : ce que `kubectl apply -k k8s/` crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans [`DECISIONS.md`](DECISIONS.md) ; ce guide explique le **comment**.
+Support de révision : ce que `kubectl apply -k k8s/` crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans [`DECISIONS.md`](../DECISIONS.md) ; ce guide explique le **comment**.
 
 Méthode conseillée : lire une partie, puis fermer le guide et réexpliquer le fichier à voix haute, ligne par ligne. Chaque partie se termine par des questions probables en soutenance.
 

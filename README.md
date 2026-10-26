@@ -8,6 +8,21 @@
 
 ---
 
+## Deploy on Kubernetes (quick start)
+
+Requires `kubectl`, the Azure CLI, and an AKS cluster attached to your private registry (`az aks update --attach-acr <registry>`). Cluster and registry setup: [`doc/setup/cluster-setup.md`](doc/setup/cluster-setup.md).
+
+```bash
+cp k8s/secrets.env.example k8s/secrets.env    # then set POSTGRES_PASSWORD
+kubectl apply -k k8s/
+kubectl -n bernstein get pods -w              # wait until every pod is Ready
+kubectl -n bernstein get svc poll result      # EXTERNAL-IP of Poll and Result
+```
+
+The images are taken from the registry and tag set in the `images` field of [`k8s/kustomization.yaml`](k8s/kustomization.yaml). A one-command build, push and deploy to your own registry, and the full deployment guide, are in progress (issues #36, #37, #38).
+
+---
+
 ## Application Architecture
 
 ```mermaid
@@ -155,10 +170,12 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 │   ├── worker.yaml           # Worker Deployment
 │   ├── poll.yaml             # Poll Deployment (2 replicas)
 │   ├── result.yaml           # Result Deployment (2 replicas)
+│   ├── pdb.yaml              # PodDisruptionBudgets for Poll and Result
 │   ├── schema.sql            # Copy of poll-application/schema.sql (checked by CI)
 │   └── secrets.env.example   # Template for the Kubernetes Secret (copy to secrets.env)
 ├── doc/
 │   ├── DECISIONS.md          # Technical choices, trade-offs and rejected alternatives
+│   ├── defense/              # Defense preparation (study guide, in French)
 │   ├── setup/                # Step-by-step AKS cluster & ACR registry setup guide
 │   └── subject/              # Official Epitech project PDF & markdown specifications
 ├── poll-application/         # Source code & Dockerfiles for the 3 services
