@@ -148,6 +148,14 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 │       └── mirror.yml        # Automatic mirror to official Epitech repository
 ├── .husky/                   # Version-controlled Git pre-commit hooks
 ├── k8s/                      # Kustomize manifests (kubectl apply -k k8s/)
+│   ├── kustomization.yaml    # Entry point: namespace, images, ConfigMaps, Secret
+│   ├── namespace.yaml        # The bernstein namespace
+│   ├── postgres.yaml         # PostgreSQL StatefulSet + PVC + ClusterIP Service
+│   ├── redis.yaml            # Redis Deployment + ClusterIP Service
+│   ├── worker.yaml           # Worker Deployment
+│   ├── poll.yaml             # Poll Deployment (2 replicas)
+│   ├── result.yaml           # Result Deployment (2 replicas)
+│   ├── schema.sql            # Copy of poll-application/schema.sql (checked by CI)
 │   └── secrets.env.example   # Template for the Kubernetes Secret (copy to secrets.env)
 ├── doc/
 │   ├── DECISIONS.md          # Technical choices, trade-offs and rejected alternatives
