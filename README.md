@@ -136,7 +136,7 @@ cp k8s/secrets.env.example k8s/secrets.env
 | `POSTGRES_PASSWORD` | yes      | Password of the PostgreSQL `postgres` user |
 | `REDIS_PASSWORD`    | no       | Empty = Redis runs without authentication  |
 
-`k8s/secrets.env` is gitignored. `kubectl apply -k k8s/` turns it into the `app-secrets` Secret and fails if the file is missing. Registry access needs no secret: AKS pulls from ACR through `--attach-acr` (see [`doc/DECISIONS.md`](doc/DECISIONS.md) §2).
+`k8s/secrets.env` is gitignored. `kubectl apply -k k8s/` turns it into the `app-secrets` Secret and fails if the file is missing. Registry access needs no secret: AKS pulls from ACR through `--attach-acr` (see [ADR 0002](doc/adr/0002-acr-registry.md)).
 
 ---
 
@@ -144,7 +144,7 @@ cp k8s/secrets.env.example k8s/secrets.env
 
 Work is tracked as GitHub issues, grouped into 4 epics: [Registry & pipeline](https://github.com/Nexlein/Bernstein/issues/43), [K8s manifests](https://github.com/Nexlein/Bernstein/issues/44), [Zero-downtime & resilience](https://github.com/Nexlein/Bernstein/issues/45), [Docs & defense](https://github.com/Nexlein/Bernstein/issues/46). Start from the lowest open issue; dependencies are set as "blocked by".
 
-Technical choices (cloud, registry, manifests, public access, image tags), with pros, cons and rejected alternatives: [`doc/DECISIONS.md`](doc/DECISIONS.md).
+Technical choices, one Architecture Decision Record (ADR) each, with pros, cons and rejected alternatives: [`doc/adr/`](doc/adr/README.md).
 
 Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.md`](doc/setup/cluster-setup.md).
 
@@ -174,7 +174,7 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 │   ├── schema.sql            # Copy of poll-application/schema.sql (checked by CI)
 │   └── secrets.env.example   # Template for the Kubernetes Secret (copy to secrets.env)
 ├── doc/
-│   ├── DECISIONS.md          # Technical choices, trade-offs and rejected alternatives
+│   ├── adr/                  # Architecture Decision Records: one file per technical choice
 │   ├── defense/              # Defense preparation (study guide, in French)
 │   ├── setup/                # Step-by-step AKS cluster & ACR registry setup guide
 │   └── subject/              # Official Epitech project PDF & markdown specifications
