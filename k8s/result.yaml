@@ -45,6 +45,8 @@ spec:
           # Lets the non-root user (uid 1000 in the image) listen on port 80.
           - name: net.ipv4.ip_unprivileged_port_start
             value: '0'
+      # preStop (5 s) + Result's own drain on SIGTERM (at most 10 s, see server.js), with margin.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: result
           # Registry and tag are set by the `images` field of kustomization.yaml.
@@ -77,6 +79,12 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 2
+          # On shutdown, keep serving 5 s while the pod is removed from the Service endpoints
+          # on every node; only then does the container receive SIGTERM.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           resources:
             requests:
               cpu: 50m
