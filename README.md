@@ -17,9 +17,9 @@ flowchart TD
         UserResult["Viewer (Browser)"]
     end
 
-    subgraph IngressLayer["Ingress / Public Services"]
-        PollIngress["Poll Entrypoint\n(LoadBalancer / Ingress :80)"]
-        ResultIngress["Result Entrypoint\n(LoadBalancer / Ingress :80 / WS)"]
+    subgraph IngressLayer["Public Services (Azure Load Balancer, one public IP each)"]
+        PollIngress["poll Service\n(type: LoadBalancer, :80)"]
+        ResultIngress["result Service\n(type: LoadBalancer, :80, WebSocket)"]
     end
 
     subgraph WebTier["Front-End Workloads (Replicas >= 2)"]
@@ -28,8 +28,8 @@ flowchart TD
     end
 
     subgraph InternalServices["Cluster Internal Services (ClusterIP)"]
-        RedisSvc["redis-service:6379\n(ClusterIP)"]
-        PostgresSvc["postgres-service:5432\n(ClusterIP)"]
+        RedisSvc["redis:6379\n(ClusterIP)"]
+        PostgresSvc["postgres:5432\n(ClusterIP)"]
     end
 
     subgraph BackingTier["Back-End & Storage Tier"]

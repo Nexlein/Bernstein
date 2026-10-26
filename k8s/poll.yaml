@@ -1,4 +1,20 @@
 # Poll: Flask / Gunicorn voting front end pushing votes to the Redis queue.
+# Public entry point: Azure gives this Service its own public IP (EXTERNAL-IP).
+apiVersion: v1
+kind: Service
+metadata:
+  name: poll
+  labels:
+    app.kubernetes.io/name: poll
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: poll
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
