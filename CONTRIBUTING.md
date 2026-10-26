@@ -29,6 +29,8 @@ docker compose up -d
 docker compose logs -f
 ```
 
+Optional: Compose sets `POSTGRES_PASSWORD=postgres` by default. To change it, run `cp .env.example .env` (gitignored) and edit `.env`.
+
 - **Poll Web UI**: [http://localhost:5000](http://localhost:5000)
 - **Result Web UI**: [http://localhost:5001](http://localhost:5001)
 
