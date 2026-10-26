@@ -42,6 +42,12 @@ jobs:
         run: |
           diff poll-application/schema.sql k8s/schema.sql || (echo "ERROR: k8s/schema.sql differs from poll-application/schema.sql. Copy it again: cp poll-application/schema.sql k8s/schema.sql" && exit 1)
 
+      # Builds the manifests the way `kubectl apply -k k8s/` would, with the empty template as secrets.env.
+      - name: Validate K8s Manifests (kustomize build)
+        run: |
+          cp k8s/secrets.env.example k8s/secrets.env
+          kubectl kustomize k8s/ > /dev/null
+
   build-microservices:
     name: Build Container Images
     runs-on: ubuntu-latest
