@@ -1,4 +1,4 @@
-# Entry point: kubectl apply -k k8s/  (preview: kubectl kustomize k8s/)
+# Base of the deployment: scripts/deploy.sh applies it through .deploy/ (preview: kubectl kustomize k8s/)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -19,18 +19,9 @@ resources:
   - poll.yaml
   - pdb.yaml
 
-# Real registry and tag of the app images (manifests use the bare name).
-# CI sets newTag to the git SHA; an evaluator sets newName to their own registry.
-images:
-  - name: result
-    newName: bernsteinacrmaeva.azurecr.io/result
-    newTag: f880145
-  - name: worker
-    newName: bernsteinacrmaeva.azurecr.io/worker
-    newTag: f880145
-  - name: poll
-    newName: bernsteinacrmaeva.azurecr.io/poll
-    newTag: f880145
+# No registry or tag here: the manifests use the bare image names (poll, worker, result),
+# and scripts/deploy.sh sets the evaluator's registry and the git SHA tag in a generated
+# overlay (.deploy/). So `kubectl apply -k k8s/` alone cannot pull the app images.
 
 # Non-secret settings shared by poll, worker, result and postgres.
 # Kustomize appends a content hash to the name and rewrites references,

@@ -10,16 +10,15 @@
 
 ## Deploy on Kubernetes (quick start)
 
-Requires `kubectl`, the Azure CLI, and an AKS cluster attached to your private registry (`az aks update --attach-acr <registry>`). Cluster and registry setup: [`doc/setup/cluster-setup.md`](doc/setup/cluster-setup.md).
+Requires `git`, Docker, `kubectl`, the Azure CLI, and an AKS cluster attached to your private registry (`az aks update --attach-acr <registry>`). Cluster and registry setup: [`doc/setup/cluster-setup.md`](doc/setup/cluster-setup.md).
 
 ```bash
-cp k8s/secrets.env.example k8s/secrets.env    # then set POSTGRES_PASSWORD
-kubectl apply -k k8s/
-kubectl -n bernstein get pods -w              # wait until every pod is Ready
-kubectl -n bernstein get svc poll result      # EXTERNAL-IP of Poll and Result
+cp k8s/secrets.env.example k8s/secrets.env           # then set POSTGRES_PASSWORD
+az aks get-credentials -g <resource-group> -n <cluster>
+REGISTRY=<name>.azurecr.io scripts/deploy.sh         # build, push, deploy, wait, print the URLs
 ```
 
-The images are taken from the registry and tag set in the `images` field of [`k8s/kustomization.yaml`](k8s/kustomization.yaml). A one-command build, push and deploy to your own registry, and the full deployment guide, are in progress (issues #36, #37, #38).
+[`scripts/deploy.sh`](scripts/deploy.sh) builds the 3 images, tags them with the git SHA, pushes them to your registry, deploys `k8s/` with those images and prints the public URLs of Poll and Result. Run it again after a code change to roll out the new version with zero downtime. Options: `scripts/deploy.sh --help`. The full deployment guide is in progress (issues #37, #38).
 
 ---
 
@@ -90,7 +89,7 @@ cp k8s/secrets.env.example k8s/secrets.env
 | `POSTGRES_PASSWORD` | yes      | Password of the PostgreSQL `postgres` user |
 | `REDIS_PASSWORD`    | no       | Empty = Redis runs without authentication  |
 
-`k8s/secrets.env` is gitignored. `kubectl apply -k k8s/` turns it into the `app-secrets` Secret and fails if the file is missing. Registry access needs no secret: AKS pulls from ACR through `--attach-acr` (see [ADR 0002](doc/adr/0002-acr-registry.md)).
+`k8s/secrets.env` is gitignored. The deploy turns it into the `app-secrets` Secret, and `scripts/deploy.sh` stops if the file is missing or `POSTGRES_PASSWORD` is empty. Registry access needs no secret: AKS pulls from ACR through `--attach-acr` (see [ADR 0002](doc/adr/0002-acr-registry.md)).
 
 ---
 
@@ -111,9 +110,9 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 ├── .github/              # CI, Epitech mirror, Dependabot, PR template
 ├── .husky/               # Pre-commit hook (regenerates the code map)
 ├── doc/                  # ADRs, cluster setup guide, defense study guide, subject
-├── k8s/                  # Kustomize manifests (kubectl apply -k k8s/)
+├── k8s/                  # Kustomize manifests (deployed by scripts/deploy.sh)
 ├── poll-application/     # Provided source code and Dockerfiles: Poll, Result, Worker
-├── scripts/              # Code map generator
+├── scripts/              # Deploy script, code map generator
 ├── tests/                # Zero-downtime test
 ├── docker-compose.yml    # Local 5-service stack, also used by CI
 ├── CONTRIBUTING.md       # Local development and repo commands

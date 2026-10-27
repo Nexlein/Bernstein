@@ -63,7 +63,7 @@ spec:
                     app.kubernetes.io/name: poll
       containers:
         - name: poll
-          # Registry and tag are set by the `images` field of kustomization.yaml.
+          # Registry and tag are set at deploy time by scripts/deploy.sh.
           image: poll
           ports:
             - name: http
