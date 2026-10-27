@@ -101,8 +101,9 @@ mkdir -p .deploy
   echo "resources:"
   echo "  - ../k8s"
   echo "images:"
+  # Quoted: a short SHA made only of digits (9167948) would otherwise be read as a YAML number.
   for app in $APPS; do
-    printf '  - name: %s\n    newName: %s/%s\n    newTag: %s\n' "$app" "$REGISTRY" "$app" "$TAG"
+    printf '  - name: %s\n    newName: "%s/%s"\n    newTag: "%s"\n' "$app" "$REGISTRY" "$app" "$TAG"
   done
 } >.deploy/kustomization.yaml
 kubectl kustomize .deploy >/dev/null || die "kubectl kustomize .deploy failed (see above)."
