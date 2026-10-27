@@ -4,7 +4,11 @@ How to deploy the voting app on your own AKS cluster and private registry, from 
 
 1. [Prerequisites](#1-prerequisites): tools, and an AKS cluster attached to a private ACR registry.
 2. [Credentials](#2-credentials): where each credential lives. None of them goes into git.
-3. [Deploy](#3-deploy): `REGISTRY=<name>.azurecr.io scripts/deploy.sh`.
+3. [Deploy](#3-deploy): `REGISTRY=<name>.azurecr.io scripts/deploy.sh`, then check it works.
+4. [Update with zero downtime](#4-update-the-app-with-zero-downtime): the graded test.
+5. [Roll back](#5-roll-back).
+6. [Stop or delete](#6-stop-or-delete-cost): cost.
+7. [Troubleshooting](#7-troubleshooting).
 
 ## 1. Prerequisites
 
@@ -66,4 +70,99 @@ Then edit `k8s/secrets.env`: one `KEY=value` per line, no quotes, no spaces arou
 REGISTRY=<name>.azurecr.io scripts/deploy.sh
 ```
 
-It builds the 3 images, pushes them to your registry, deploys `k8s/`, waits until everything is ready and prints the public URLs of Poll and Result. Options: `scripts/deploy.sh --help`. Step-by-step checks, the live update, rollback and cleanup: in progress (#38).
+In order, the script:
+
+1. checks the prerequisites above, and stops before changing anything if one is missing;
+2. tags the images with the short git SHA (`<sha>-dirty-<date-time>` if `poll-application/` has uncommitted changes);
+3. builds `poll`, `worker` and `result` for `linux/amd64` and pushes them to your registry;
+4. applies `k8s/` with those images, through a generated overlay in `.deploy/`, and waits for every rollout;
+5. waits for the public IPs and prints the URLs of Poll and Result.
+
+The first run takes a few minutes (builds, first push, disk, public IPs); the next ones about a minute. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
+
+### Check the deployment
+
+```bash
+kubectl -n bernstein get pods              # 7 pods READY: 2 poll, 2 result, worker, redis, postgres-0
+kubectl -n bernstein get svc poll result   # EXTERNAL-IP of Poll and Result
+```
+
+Open the Poll URL and vote, then open the Result URL: the count updates live. The votes, from the command line:
+
+```bash
+kubectl -n bernstein exec postgres-0 -- psql -U postgres -d postgres -c "SELECT vote, COUNT(*) FROM votes GROUP BY vote"
+```
+
+**After `az aks stop` / `az aks start`:** the two public IPs of our cluster stayed the same across every restart (observed, not promised by Microsoft's docs). Read them again with `kubectl -n bernstein get svc poll result`. If `kubectl` cannot reach the cluster, run `az aks get-credentials` again first: the API server IP may change ([ADR 0001](doc/adr/0001-aks-cluster.md)).
+
+## 4. Update the app with zero downtime
+
+The graded test: change the code and redeploy while the app is being requested.
+
+1. Change something visible, for example the `<h3>` title in `poll-application/poll/templates/index.html`. No commit needed: uncommitted changes get a `-dirty` tag, so a new rollout. Leave the vote option labels alone: Result has them hardcoded ([ADR 0011](doc/adr/0011-poll-deployment.md)).
+2. Redeploy under the zero-downtime test:
+
+   ```bash
+   REGISTRY=<name>.azurecr.io tests/zero-downtime.sh -- scripts/deploy.sh
+   ```
+
+   It requests Poll and Result continuously while the script builds, pushes and rolls out, then prints every error, or `PASS: no failed request.` ([ADR 0016](doc/adr/0016-zero-downtime-test.md)).
+
+3. Optional, in a second terminal: `kubectl -n bernstein get pods -w` shows the pods replaced one at a time.
+4. Reload the Poll page: the new title shows, and "Processed by container ID" names the pod that answered.
+
+Measured on AKS: live in 52 s, 0 errors in 1225 requests ([ADR 0017](doc/adr/0017-deploy-script.md)). Run the test from a machine whose connection is not busy: a big push (first deploy, all layers new) or another download slows down the test's own requests ([troubleshooting](#7-troubleshooting)).
+
+## 5. Roll back
+
+Both ways are rolling updates, with zero downtime.
+
+- **Quick, until the next deploy:** one app back to its previous version. The next `scripts/deploy.sh` applies the current code again.
+
+  ```bash
+  kubectl -n bernstein rollout history deploy/poll   # the revisions
+  kubectl -n bernstein rollout undo deploy/poll      # back to the previous one
+  ```
+
+- **Lasting:** redeploy a known-good tag. Nothing is built: the images are already in the registry.
+
+  ```bash
+  az acr repository show-tags --name <name> --repository poll --orderby time_desc -o table
+  REGISTRY=<name>.azurecr.io TAG=<good tag> scripts/deploy.sh
+  ```
+
+Measured on AKS under `tests/zero-downtime.sh`: `rollout undo` 0 errors in 820 requests, `TAG=<sha>` 0 errors in 1017.
+
+## 6. Stop or delete (cost)
+
+Stop the nodes when nobody uses the app. Everything is kept; the disk, the public IPs and the registry are still billed.
+
+```bash
+az aks stop  -g <resource-group> -n <cluster>   # nodes off, compute not billed
+az aks start -g <resource-group> -n <cluster>   # nodes on: the app starts again by itself
+```
+
+Delete the app only, and keep the cluster and the registry:
+
+```bash
+kubectl delete namespace bernstein
+```
+
+**This deletes the votes:** the PostgreSQL disk goes with its PVC (`reclaimPolicy: Delete`, [ADR 0007](doc/adr/0007-postgres-statefulset.md)). The next deploy starts with an empty database.
+
+Delete everything, after the defense:
+
+```bash
+az group delete --name <resource-group> --yes   # every resource in the group: cluster, registry, disks, IPs
+```
+
+## 7. Troubleshooting
+
+| Symptom                                                                                                                                             | Likely cause                                                                          | Fix                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ImagePullBackOff` on poll, worker or result                                                                                                        | the cluster cannot pull from the registry, or `kubectl apply -k k8s/` was run by hand | check the `AcrPull` role ([setup guide, step 6](doc/setup/cluster-setup.md#6-connect-kubectl-to-the-cluster)) and [attach the registry](doc/setup/cluster-setup.md#already-have-a-cluster-attach-the-registry) if missing; deploy with `scripts/deploy.sh` |
+| `EXTERNAL-IP` stays `<pending>`                                                                                                                     | Azure is still creating the public IP                                                 | wait 1 to 2 minutes (the script waits up to 5)                                                                                                                                                                                                             |
+| worker restarts, Result not ready; `kubectl -n bernstein logs deploy/worker` says `password authentication failed` or `password is an empty string` | `POSTGRES_PASSWORD` is empty, or differs from the one the database was created with   | put that password back in `k8s/secrets.env` and redeploy ([app secrets](#app-secrets-k8ssecretsenv))                                                                                                                                                       |
+| `kubectl` cannot reach the cluster after a restart                                                                                                  | the API server IP changed                                                             | `az aks get-credentials -g <resource-group> -n <cluster> --overwrite-existing`                                                                                                                                                                             |
+| `scripts/deploy.sh` stops with `ERROR: ...`                                                                                                         | a prerequisite is missing                                                             | the message names it and the command to fix it                                                                                                                                                                                                             |
+| `tests/zero-downtime.sh` shows timeouts on Poll **and** Result at the same seconds                                                                  | the test machine's own connection is busy (a big push, a system update downloading)   | rerun from an idle connection or another machine. A real rollout problem only hits the app being updated                                                                                                                                                   |

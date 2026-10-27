@@ -193,13 +193,9 @@ Add in GitHub → Settings → Secrets and variables → Actions:
 
 ---
 
-## 9. Cost management
+## 9. Stop or delete (cost)
 
-```bash
-az aks stop  --resource-group "$RG" --name "$AKS"   # shut down the nodes
-az aks start --resource-group "$RG" --name "$AKS"   # start them again
-az group delete --name "$RG" --yes                  # delete EVERYTHING (end of project)
-```
+Stop the nodes when idle, delete the app or everything after the defense: [`DEPLOY.md`](../../DEPLOY.md#6-stop-or-delete-cost).
 
 ---
 
