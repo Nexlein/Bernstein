@@ -1093,7 +1093,7 @@ kubectl -n bernstein get pods -w             # dans un autre terminal, pour suiv
 3. Postgres attend son disque (quelques dizaines de secondes), puis initialise la base et la table `votes`.
 4. Pendant ce temps, le worker affiche `Waiting for db` et Result réessaie : leur readiness est rouge.
 5. Dès que Postgres et Redis répondent, tout passe au vert : `7/7` pods `Running` et `1/1` ou `2/2` ready.
-6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur :
+6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur. **Mesuré (#39)** : depuis un clone neuf et un namespace vide, l'app est en ligne en 1 min 29 s, images déjà en cache dans Docker :
 
 ```bash
 kubectl -n bernstein get svc poll result   # colonne EXTERNAL-IP
