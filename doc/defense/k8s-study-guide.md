@@ -436,6 +436,7 @@ resources:
 - `requests` : ce que le scheduler **réserve** sur un nœud pour placer le pod. `100m` = 100 millicores = 0,1 CPU.
 - `limits` : le **plafond**. Au-delà de 512 Mi de mémoire, le conteneur est tué (`OOMKilled`). Au-delà de 0,5 CPU, il est **ralenti** (throttling), pas tué.
 - `Mi` = mébioctet (1024 × 1024 octets).
+- **Mesuré** : 29 Mi et 5m au repos, 17m sous charge. La request de 256 Mi paraît large, mais Postgres réserve un cache de 128 Mo (`shared_buffers`, vérifié avec `SHOW shared_buffers`) qui se remplit à mesure qu'il lit des données ([ADR 0018](../adr/0018-resource-requests-and-limits.md)).
 
 ### La sécurité du conteneur
 
@@ -584,9 +585,9 @@ command:
   - -c
   - |
     if [ -n "$REDIS_PASSWORD" ]; then
-      exec redis-server --save '' --appendonly no --requirepass "$REDIS_PASSWORD"
+      exec redis-server --save '' --appendonly no --maxmemory 100mb --maxmemory-policy noeviction --requirepass "$REDIS_PASSWORD"
     else
-      exec redis-server --save '' --appendonly no
+      exec redis-server --save '' --appendonly no --maxmemory 100mb --maxmemory-policy noeviction
     fi
 ```
 
@@ -595,6 +596,8 @@ command:
 - `if [ -n "$REDIS_PASSWORD" ]` : si un mot de passe est défini (non vide), Redis démarre avec `--requirepass`. Sinon, il démarre sans authentification.
 - `--save ''` : désactive les **sauvegardes RDB** périodiques, actives par défaut.
 - `--appendonly no` : désactive le **journal AOF**. Redis reste donc purement en mémoire : il n'écrit rien sur disque et ne fait jamais de `fork` pour sauvegarder.
+- `--maxmemory 100mb` : Redis plafonne lui-même sa mémoire, sous la limite du conteneur (128 Mi), ce qui laisse 28 Mio pour son propre fonctionnement.
+- `--maxmemory-policy noeviction` : une fois plein, Redis **refuse les écritures** au lieu d'effacer des clés. Testé sur AKS : un vote reçoit une erreur 500 de Poll, mais la page et `/readyz` répondent toujours, et le worker peut encore vider la file ([ADR 0018](../adr/0018-resource-requests-and-limits.md)).
 - `exec` : le shell **se remplace** par `redis-server`. Redis devient le processus principal (PID 1) et reçoit directement le signal `SIGTERM` quand Kubernetes l'arrête, ce qui permet un arrêt propre.
 
 ### Le mot de passe, optionnel
@@ -627,10 +630,11 @@ La liveness est le même test, avec `initialDelaySeconds: 10`, `periodSeconds: 1
 
 ### Les ressources
 
-Requests 50m / 64Mi, limits 250m / 128Mi. Redis vide pèse quelques Mo. La limite de 128 Mi borne la taille de la file : au-delà, le conteneur est tué et la file perdue. Un `maxmemory` est prévu dans le ticket #35 pour refuser plutôt les écritures.
+Requests 50m / 64Mi, limits 250m / 128Mi. **Mesuré** : 3 Mi et 5m au repos, 19m sous charge (37 votes par seconde). Sans `maxmemory`, une file qui grossit atteindrait les 128 Mi : le conteneur serait tué (`OOMKilled`) et toute la file perdue. Avec `maxmemory 100mb` et `noeviction`, Redis refuse les nouveaux votes et garde ceux en attente.
 
 ### Questions probables
 
+- _« Comment limiter le CPU de Redis ? »_ C'est déjà fait : `limits.cpu: 250m`. Au-delà, Redis est ralenti (throttling), pas tué. De toute façon, il exécute les commandes sur un seul thread principal.
 - _« Si Redis redémarre, que perd-on ? »_ Les votes encore dans la file, pas encore traités par le worker. En temps normal, la file est vide en quelques millisecondes. Un pod Redis revient en environ 4 s (mesuré).
 - _« Pourquoi pas de disque pour Redis ? »_ C'est un tampon, pas la source de vérité, qui est Postgres. Un disque ajouterait un coût et un rattachement lent lors d'un drain.
 - _« Que se passe-t-il pour Poll si Redis tombe ? »_ Le `/readyz` de Poll fait un `ping` sur Redis : les 2 pods Poll deviennent non ready, et la page de vote n'est plus servie. **Redis est un point unique de défaillance pour Poll.**
@@ -750,7 +754,7 @@ securityContext:
     drop: ['ALL']
 ```
 
-- La mémoire est plus haute que pour les autres apps, à cause de la **JVM** Java.
+- La mémoire est plus haute que pour les autres apps, à cause de la **JVM** Java. **Mesuré dans le pod** : la JVM lit la limite du conteneur (384 Mi) et choisit seule un tas maximum de 126 Mio et le ramasse-miettes Serial (elle ne voit qu'1 CPU avec la limite de 500m). Usage réel : 43 Mi au repos, 53 Mi sous charge. Au déploiement, le nouveau worker est prêt 5 s après son démarrage.
 - `readOnlyRootFilesystem: true` : tout le système de fichiers du conteneur est en lecture seule. Le worker n'écrit rien sur disque, et un attaquant ne pourrait déposer aucun fichier. Vérifié : `touch /app/x` donne `Read-only file system`.
 
 ### Questions probables
@@ -1204,7 +1208,7 @@ kubectl -n bernstein scale deploy/poll --replicas=4
 - `start` : les nœuds sont **nouveaux** (noms différents), et tous les pods sont recréés. Postgres retrouve son disque et ses votes.
 - L'adresse du serveur API peut changer : il faut refaire `az aks get-credentials`.
 - Le disque Azure reste facturé même cluster arrêté (quelques centimes par mois pour 1 Gi).
-- Les Services `poll` et `result` existent toujours. Leurs IP publiques devraient être conservées : **à vérifier** au prochain `start` avec `kubectl -n bernstein get svc`. Azure les range dans le groupe de ressources du cluster (`MC_…`), où nos comptes n'ont pas le droit de lecture.
+- Les Services `poll` et `result` existent toujours, et leurs IP publiques sont **conservées** : vérifié à chaque `start` sur notre cluster, sans garantie écrite de Microsoft. Azure les range dans le groupe de ressources du cluster (`MC_…`), où nos comptes n'ont pas le droit de lecture. En revanche, supprimer le namespace libère les IP : le déploiement suivant en reçoit de nouvelles (vu dans #39).
 
 ### 9.9 Tout supprimer
 
