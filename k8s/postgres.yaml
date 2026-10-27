@@ -85,6 +85,7 @@ spec:
               memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ['ALL']
           volumeMounts:
@@ -95,10 +96,22 @@ spec:
             - name: init
               mountPath: /docker-entrypoint-initdb.d
               readOnly: true
+            # Read-only root filesystem: PostgreSQL writes its socket and lock file here, and temp files in /tmp.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: init
           configMap:
             name: postgres-init
+        - name: run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
   volumeClaimTemplates:
     - metadata:
         name: data

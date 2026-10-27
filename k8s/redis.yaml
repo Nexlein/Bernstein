@@ -93,5 +93,7 @@ spec:
               memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            # Nothing to write: no RDB/AOF files (--save '', --appendonly no).
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ['ALL']
