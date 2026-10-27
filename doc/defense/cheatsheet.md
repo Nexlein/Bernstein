@@ -45,7 +45,7 @@ Pour changer : `resources` dans `k8s/redis.yaml`, puis redéployer sans rebuild 
 
 ## 4. « Comment autoscaler Poll ? »
 
-Pas en place aujourd'hui (#33). Ce serait un HorizontalPodAutoscaler sur le CPU : metrics-server tourne déjà dans AKS. Le pourcentage se calcule sur `requests.cpu` (50m pour Poll ; 100m mesurés sous charge, donc 200 %). La vraie limite est la place sur les nœuds : les requests font déjà 1712m, presque un nœud entier (1900m). Au-delà, il faut un 3e nœud (cluster autoscaler ; 3 nœuds au maximum avec le quota de 6 vCPU). **Non mesuré** : pas de test de charge avec un HPA.
+Pas en place aujourd'hui (#33). Ce serait un HorizontalPodAutoscaler sur le CPU : metrics-server tourne déjà dans AKS. Le pourcentage se calcule sur `requests.cpu` (50m pour Poll ; 100m mesurés sous charge, donc 200 %). La vraie limite est la place sur les nœuds : les requests font déjà 1662m, presque un nœud entier (1900m). Au-delà, il faut un 3e nœud (cluster autoscaler ; 3 nœuds au maximum avec le quota de 6 vCPU). **Non mesuré** : pas de test de charge avec un HPA.
 
 ```bash
 kubectl -n bernstein autoscale deploy/poll --min=2 --max=4 --cpu=70% --dry-run=server -o yaml   # l'objet, sans le créer
@@ -105,3 +105,15 @@ kubectl -n bernstein scale deploy/worker --replicas=1            # la file retom
 ```
 
 Détails : [guide 9.6](k8s-study-guide.md#96-une-dépendance-tombe), [ADR 0009](../adr/0009-redis-queue.md).
+
+## 9. « Qui peut parler à Postgres ? »
+
+Seuls le worker et Result, sur le port 5432. Tout le namespace est fermé, en entrée et en sortie, puis chaque flux de l'app est ouvert : DNS, internet vers poll et result (port 80), poll vers redis, worker vers redis et postgres, result vers postgres. Cilium applique les règles. Mesuré : depuis un pod Poll, Redis répond ; Postgres et internet partent en timeout.
+
+```bash
+kubectl -n bernstein get networkpolicy
+kubectl -n bernstein exec deploy/poll -- python -c "import socket; socket.create_connection(('redis', 6379), 3); print('redis ok')"
+kubectl -n bernstein exec deploy/poll -- python -c "import socket; socket.create_connection(('postgres', 5432), 3)"   # TimeoutError
+```
+
+Détails : [ADR 0025](../adr/0025-network-policies.md), [guide 8 ter](k8s-study-guide.md#8-ter-k8snetwork-policiesyaml-ligne-par-ligne).

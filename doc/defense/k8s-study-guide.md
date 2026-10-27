@@ -2,7 +2,7 @@
 
 Support de révision : ce que le déploiement (`scripts/deploy.sh`, qui applique `k8s/`) crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans les [ADR](../adr/README.md) (un fichier par choix) ; ce guide explique le **comment**.
 
-Pour répondre vite en soutenance (drain, pod tué, limites, autoscaling, sauvegarde) : l'[antisèche](cheatsheet.md), avec les commandes à montrer en direct.
+Pour répondre vite en soutenance (drain, pod tué, limites, autoscaling, sauvegarde, réseau) : l'[antisèche](cheatsheet.md), avec les commandes à montrer en direct.
 
 Méthode conseillée : lire une partie, puis fermer le guide et réexpliquer le fichier à voix haute, ligne par ligne. Chaque partie se termine par des questions probables en soutenance.
 
@@ -20,6 +20,7 @@ Avancement :
 | 7      | `poll.yaml`                       | fait |
 | 8      | `result.yaml`                     | fait |
 | 8 bis  | `pdb.yaml`                        | fait |
+| 8 ter  | `network-policies.yaml`           | fait |
 | 9      | Scénarios (rollout, drain, panne) | fait |
 
 ---
@@ -54,26 +55,27 @@ Avancement :
 
 ## 1. Ce qui est créé dans le cluster
 
-### Ce qu'on écrit (15 objets)
+### Ce qu'on écrit (22 objets)
 
 `kubectl kustomize k8s/` produit exactement ces objets :
 
-| Type                | Nom                    | Vient de             | Rôle                                                          |
-| ------------------- | ---------------------- | -------------------- | ------------------------------------------------------------- |
-| Namespace           | `bernstein`            | `namespace.yaml`     | Le « dossier » qui contient tout le reste                     |
-| ConfigMap           | `app-config-<hash>`    | `kustomization.yaml` | Adresses et noms (Redis, Postgres)                            |
-| ConfigMap           | `postgres-init-<hash>` | `kustomization.yaml` | Le fichier `schema.sql`                                       |
-| Secret              | `app-secrets-<hash>`   | `kustomization.yaml` | Les mots de passe (`secrets.env`)                             |
-| Service             | `postgres`             | `postgres.yaml`      | Adresse interne de la base                                    |
-| Service             | `redis`                | `redis.yaml`         | Adresse interne de la file                                    |
-| Service             | `poll`                 | `poll.yaml`          | **IP publique** de la page de vote                            |
-| Service             | `result`               | `result.yaml`        | **IP publique** de la page des résultats                      |
-| PodDisruptionBudget | `poll`, `result`       | `pdb.yaml`           | Au moins 1 pod de chaque toujours disponible pendant un drain |
-| StatefulSet         | `postgres`             | `postgres.yaml`      | La base, avec son disque                                      |
-| Deployment          | `redis`                | `redis.yaml`         | La file de votes                                              |
-| Deployment          | `worker`               | `worker.yaml`        | Redis → Postgres                                              |
-| Deployment          | `poll`                 | `poll.yaml`          | Page de vote                                                  |
-| Deployment          | `result`               | `result.yaml`        | Page des résultats                                            |
+| Type                | Nom                    | Vient de                | Rôle                                                          |
+| ------------------- | ---------------------- | ----------------------- | ------------------------------------------------------------- |
+| Namespace           | `bernstein`            | `namespace.yaml`        | Le « dossier » qui contient tout le reste                     |
+| ConfigMap           | `app-config-<hash>`    | `kustomization.yaml`    | Adresses et noms (Redis, Postgres)                            |
+| ConfigMap           | `postgres-init-<hash>` | `kustomization.yaml`    | Le fichier `schema.sql`                                       |
+| Secret              | `app-secrets-<hash>`   | `kustomization.yaml`    | Les mots de passe (`secrets.env`)                             |
+| Service             | `postgres`             | `postgres.yaml`         | Adresse interne de la base                                    |
+| Service             | `redis`                | `redis.yaml`            | Adresse interne de la file                                    |
+| Service             | `poll`                 | `poll.yaml`             | **IP publique** de la page de vote                            |
+| Service             | `result`               | `result.yaml`           | **IP publique** de la page des résultats                      |
+| PodDisruptionBudget | `poll`, `result`       | `pdb.yaml`              | Au moins 1 pod de chaque toujours disponible pendant un drain |
+| NetworkPolicy       | 7 (voir partie 8 ter)  | `network-policies.yaml` | Tout fermé, puis seulement les flux de l'app                  |
+| StatefulSet         | `postgres`             | `postgres.yaml`         | La base, avec son disque                                      |
+| Deployment          | `redis`                | `redis.yaml`            | La file de votes                                              |
+| Deployment          | `worker`               | `worker.yaml`           | Redis → Postgres                                              |
+| Deployment          | `poll`                 | `poll.yaml`             | Page de vote                                                  |
+| Deployment          | `result`               | `result.yaml`           | Page des résultats                                            |
 
 ### Ce que Kubernetes crée tout seul à partir de ça
 
@@ -1079,6 +1081,132 @@ Le PDB est complémentaire de la stratégie `maxUnavailable: 0`, qui ne s'appliq
 
 - _« Différence entre `maxUnavailable` (stratégie) et un PDB ? »_ La stratégie protège les **mises à jour** du Deployment. Le PDB protège les **évictions** (drain, mise à jour de nœuds).
 - _« Pourquoi pas de PDB sur Postgres ? »_ Avec 1 replica, il bloquerait tous les drains. Sa coupure pendant un drain est assumée et documentée.
+
+---
+
+## 8 ter. `k8s/network-policies.yaml`, ligne par ligne
+
+Une NetworkPolicy est un pare-feu entre pods, écrit avec des **labels** au lieu d'adresses IP. Le fichier contient 7 objets séparés par `---`.
+
+**Prérequis** : un moteur dans le cluster. Sans moteur, l'API accepte les objets et **rien n'est filtré**. Le nôtre est Cilium ([ADR 0025](../adr/0025-network-policies.md)) : un pod `cilium` par nœud applique les règles dans le noyau (eBPF), et remplace `kube-proxy`.
+
+### Tout fermer
+
+```yaml
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+```
+
+- `podSelector: {}` : **tous** les pods du namespace.
+- `policyTypes: [Ingress, Egress]` sans aucune règle : rien n'entre, rien ne sort.
+
+La règle à retenir : les policies **s'additionnent**. Un pod visé par au moins une policy n'accepte que ce qu'une de ses policies autorise. Il n'y a pas de règle « interdire » : on ferme en sélectionnant le pod, on ouvre en ajoutant une règle.
+
+### Le DNS
+
+```yaml
+podSelector: {}
+policyTypes:
+  - Egress
+egress:
+  - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+    ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP
+```
+
+- Sans elle, `default-deny` bloque aussi le DNS : Poll ne trouverait plus `redis`.
+- `namespaceSelector` et `podSelector` dans **le même élément** (un seul tiret) : les pods `kube-dns` **du** namespace `kube-system`. Avec un tiret devant `podSelector`, ce serait un « ou » : tout `kube-system`, ou les pods `kube-dns` de notre namespace.
+- UDP **et** TCP : le DNS passe en TCP quand la réponse est grande.
+
+### Poll (Result est pareil, avec Postgres)
+
+```yaml
+podSelector:
+  matchLabels:
+    app.kubernetes.io/name: poll
+policyTypes:
+  - Ingress
+  - Egress
+ingress:
+  - ports:
+      - port: 80
+        protocol: TCP
+egress:
+  - to:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: redis
+    ports:
+      - port: 6379
+        protocol: TCP
+```
+
+- `ingress` sans `from` : le port 80 est ouvert à tous. Le trafic public arrive par le load balancer et par n'importe quel nœud : sa source n'est pas fixe.
+- `egress` : seulement vers les pods `redis`, port 6379. Internet et Postgres sont fermés.
+- Il faut **les deux côtés** : l'egress de Poll vers Redis, **et** l'ingress de Redis depuis Poll. S'il en manque un, la connexion est bloquée.
+
+### Le worker
+
+Seulement de l'egress, vers Redis et vers Postgres. Pas de règle d'ingress : seul le kubelet l'appelle (ses probes), depuis le nœud, et ce trafic passe. Vérifié : le worker reste ready, sans redémarrage.
+
+### Redis et Postgres
+
+```yaml
+podSelector:
+  matchLabels:
+    app.kubernetes.io/name: redis
+policyTypes:
+  - Ingress
+ingress:
+  - from:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: poll
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: worker
+    ports:
+      - port: 6379
+        protocol: TCP
+```
+
+- Deux éléments dans `from` (deux tirets) : poll **ou** worker.
+- Pas d'egress listé : `default-deny` s'applique, Redis et Postgres ne peuvent rien appeler. Ils n'en ont pas besoin.
+- Postgres : pareil, depuis worker ou result, port 5432.
+
+### Ce qui n'est pas filtré
+
+`kubectl exec`, `logs` et `port-forward` passent par l'API et le kubelet, pas par le réseau des pods : la sauvegarde (`pg_dump` par `exec`) marche toujours.
+
+### Mesuré sur AKS
+
+- Depuis un pod Poll : `redis:6379` ouvert ; `postgres:5432` et `1.1.1.1:443` en timeout. Avant les policies, les trois s'ouvraient.
+- Depuis un pod Result : `postgres:5432` ouvert, `redis:6379` en timeout.
+- Un pod sans label dans `bernstein` : DNS OK, tout le reste bloqué. Un pod d'un autre namespace : Redis et Postgres bloqués, `poll:80` ouvert.
+- Sous `tests/zero-downtime.sh` : mise en place des policies 0 erreur sur 572 ; `rollout restart` 0 sur 1014 ; drain du nœud de Redis 0 sur 1481.
+- Le passage du cluster à Cilium (une seule fois) : environ 12 min, 3 drains via un nœud temporaire. Poll 225 échecs, Result 464, pendant que Redis et Postgres changeaient de nœud.
+
+### Questions probables
+
+- _« Comment prouvez-vous que Poll ne peut pas joindre Postgres ? »_ Depuis le pod Poll, une connexion à `postgres:5432` part en timeout, alors que `redis:6379` répond (commande dans l'[antisèche](cheatsheet.md)).
+- _« Et si le cluster de l'évaluateur n'a pas de moteur ? »_ Les policies sont acceptées et ignorées : l'app marche, mais rien n'est filtré. `DEPLOY.md` le vérifie dans ses prérequis.
+- _« Pourquoi bloquer aussi l'egress ? »_ Un pod compromis ne peut ni appeler internet ni les autres namespaces.
+- _« On ajoute un service, que se passe-t-il ? »_ Il est bloqué par défaut : ses connexions partent en timeout jusqu'à ce qu'on ajoute sa règle.
 
 ---
 
