@@ -1234,6 +1234,8 @@ Supprime le namespace, donc **tout**, y compris la PVC. La classe de stockage `d
 | Relancer les pods sans changer l'image      | `kubectl -n bernstein rollout restart deploy/poll`                            |
 | Vers quels pods pointe un Service           | `kubectl -n bernstein get endpointslices -l kubernetes.io/service-name=redis` |
 | Voir le rendu sans rien appliquer           | `kubectl kustomize k8s/`                                                      |
-| Comparer avec ce qui tourne                 | `kubectl diff -k k8s/`                                                        |
+| Comparer avec ce qui tourne                 | `kubectl diff -k .deploy`                                                     |
 | Consommation CPU et mémoire                 | `kubectl -n bernstein top pods`                                               |
 | Tester un pod sans passer par l'IP publique | `kubectl -n bernstein port-forward deploy/poll 8080:80`                       |
+
+`.deploy/` est l'overlay écrit par le dernier `scripts/deploy.sh`, avec les images de notre registry. `kubectl diff -k k8s/` afficherait une fausse différence sur chaque image : la base ne nomme aucun registry (vérifié sur AKS).
