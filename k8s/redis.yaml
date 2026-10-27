@@ -50,11 +50,13 @@ spec:
             - sh
             - -c
             # --save '' --appendonly no: pure in-memory queue, no RDB/AOF files written in the container.
+            # --maxmemory 100mb, under the 128Mi limit, with noeviction: when full, Redis refuses new
+            # votes (Poll answers 500) instead of being OOMKilled with every queued vote. Reads still work.
             - |
               if [ -n "$REDIS_PASSWORD" ]; then
-                exec redis-server --save '' --appendonly no --requirepass "$REDIS_PASSWORD"
+                exec redis-server --save '' --appendonly no --maxmemory 100mb --maxmemory-policy noeviction --requirepass "$REDIS_PASSWORD"
               else
-                exec redis-server --save '' --appendonly no
+                exec redis-server --save '' --appendonly no --maxmemory 100mb --maxmemory-policy noeviction
               fi
           ports:
             - name: redis
