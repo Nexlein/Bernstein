@@ -1125,7 +1125,9 @@ t5  ancien : 0                                nouveau : 2
 
 Chaque ancien pod passe d'abord **5 s en `preStop`** : il sort des endpoints tout en servant encore, puis il reçoit `SIGTERM` et termine ses requêtes (parties 7 et 8).
 
-**Mesuré sur AKS** : requêtes en continu (toutes les 50 ms) sur les 2 IP publiques pendant `kubectl rollout restart deploy/poll deploy/result` : **0 erreur sur 2461 requêtes**. Même test avec `tests/zero-downtime.sh` (#29, [ADR 0016](../adr/0016-zero-downtime-test.md)) : 0 erreur sur 975, puis sur 1996 requêtes.
+**Mesuré sur AKS** : requêtes en continu (toutes les 50 ms) sur les 2 IP publiques pendant `kubectl rollout restart deploy/poll deploy/result` : **0 erreur sur 2461 requêtes**. Même test avec `tests/zero-downtime.sh` (#29, [ADR 0016](../adr/0016-zero-downtime-test.md)) : 0 erreur sur 975, puis sur 1996 requêtes. Et le scénario complet de la soutenance, une modification non commitée de Poll déployée avec `scripts/deploy.sh` : en ligne en 52 s, **0 erreur sur 1225 requêtes** ([ADR 0017](../adr/0017-deploy-script.md)).
+
+**Piège** : lancer le test depuis la machine qui pousse les images fausse la mesure si le push est gros. Au premier déploiement (3 images neuves), l'upload a saturé la connexion : 2 timeouts pendant le push, aucun pendant le rollout. Une modification de code ne pousse qu'une petite couche, donc pas de souci en soutenance.
 
 ### 9.3 Changement de config ou de mot de passe
 

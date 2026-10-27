@@ -19,6 +19,11 @@
 - **Fails before changing anything** when `REGISTRY`, a tool, `k8s/secrets.env`, `POSTGRES_PASSWORD` or the cluster is missing, and prints the command to fix it. It renders the manifests before the builds, so a manifest error shows in seconds.
 - **"Done" means reachable:** it waits for every rollout and for both public IPs.
 - Only `bash` (3.2+), `git`, `docker`, `kubectl` and `az`: the tools the process needs anyway.
+- **Tested on AKS** with `tests/zero-downtime.sh -- scripts/deploy.sh`:
+  - First deploy over the `f880145` images: 0 errors during the rollout (1048 requests).
+  - Uncommitted change in Poll (`-dirty` tag), the defense scenario: live in 52 s, 0 errors in 1225 requests.
+  - Rollback with `TAG=<sha>` (no build): 0 errors in 986 requests.
+  - A vote cast afterwards reached PostgreSQL.
 
 ## Trade-offs
 
@@ -27,6 +32,7 @@
 - Every run rebuilds and rolls the 3 apps, even if one changed (one shared tag, [ADR 0005](0005-image-tags-git-sha.md)). Docker's layer cache keeps unchanged builds fast, and the rollouts have zero downtime.
 - `kubectl apply` does not delete an object removed from `k8s/`. Not an issue while we only add or change objects.
 - Automatic login for ACR only: another registry needs `docker login` first.
+- **Test from another machine when the push is big.** On the first deploy (3 images, all layers new), the upload saturated our connection: the zero-downtime test, run on the same machine, logged 2 timeouts during the push, 90 s before the apply, and none during the rollout. A code change only pushes its changed layer, so the defense scenario ran clean from the same machine.
 
 ## Alternatives rejected
 
