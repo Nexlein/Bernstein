@@ -8,20 +8,21 @@ Méthode conseillée : lire une partie, puis fermer le guide et réexpliquer le 
 
 Avancement :
 
-| Partie | Fichier                           | État |
-| ------ | --------------------------------- | ---- |
-| 0      | Vocabulaire                       | fait |
-| 1      | Ce qui est créé dans le cluster   | fait |
-| 2      | `kustomization.yaml`              | fait |
-| 3      | `namespace.yaml`                  | fait |
-| 4      | `postgres.yaml` (+ `schema.sql`)  | fait |
-| 5      | `redis.yaml`                      | fait |
-| 6      | `worker.yaml`                     | fait |
-| 7      | `poll.yaml`                       | fait |
-| 8      | `result.yaml`                     | fait |
-| 8 bis  | `pdb.yaml`                        | fait |
-| 8 ter  | `network-policies.yaml`           | fait |
-| 9      | Scénarios (rollout, drain, panne) | fait |
+| Partie   | Fichier                           | État |
+| -------- | --------------------------------- | ---- |
+| 0        | Vocabulaire                       | fait |
+| 1        | Ce qui est créé dans le cluster   | fait |
+| 2        | `kustomization.yaml`              | fait |
+| 3        | `namespace.yaml`                  | fait |
+| 4        | `postgres.yaml` (+ `schema.sql`)  | fait |
+| 5        | `redis.yaml`                      | fait |
+| 6        | `worker.yaml`                     | fait |
+| 7        | `poll.yaml`                       | fait |
+| 8        | `result.yaml`                     | fait |
+| 8 bis    | `pdb.yaml`                        | fait |
+| 8 ter    | `network-policies.yaml`           | fait |
+| 8 quater | `hpa.yaml`                        | fait |
+| 9        | Scénarios (rollout, drain, panne) | fait |
 
 ---
 
@@ -55,27 +56,28 @@ Avancement :
 
 ## 1. Ce qui est créé dans le cluster
 
-### Ce qu'on écrit (22 objets)
+### Ce qu'on écrit (23 objets)
 
 `kubectl kustomize k8s/` produit exactement ces objets :
 
-| Type                | Nom                    | Vient de                | Rôle                                                          |
-| ------------------- | ---------------------- | ----------------------- | ------------------------------------------------------------- |
-| Namespace           | `bernstein`            | `namespace.yaml`        | Le « dossier » qui contient tout le reste                     |
-| ConfigMap           | `app-config-<hash>`    | `kustomization.yaml`    | Adresses et noms (Redis, Postgres)                            |
-| ConfigMap           | `postgres-init-<hash>` | `kustomization.yaml`    | Le fichier `schema.sql`                                       |
-| Secret              | `app-secrets-<hash>`   | `kustomization.yaml`    | Les mots de passe (`secrets.env`)                             |
-| Service             | `postgres`             | `postgres.yaml`         | Adresse interne de la base                                    |
-| Service             | `redis`                | `redis.yaml`            | Adresse interne de la file                                    |
-| Service             | `poll`                 | `poll.yaml`             | **IP publique** de la page de vote                            |
-| Service             | `result`               | `result.yaml`           | **IP publique** de la page des résultats                      |
-| PodDisruptionBudget | `poll`, `result`       | `pdb.yaml`              | Au moins 1 pod de chaque toujours disponible pendant un drain |
-| NetworkPolicy       | 7 (voir partie 8 ter)  | `network-policies.yaml` | Tout fermé, puis seulement les flux de l'app                  |
-| StatefulSet         | `postgres`             | `postgres.yaml`         | La base, avec son disque                                      |
-| Deployment          | `redis`                | `redis.yaml`            | La file de votes                                              |
-| Deployment          | `worker`               | `worker.yaml`           | Redis → Postgres                                              |
-| Deployment          | `poll`                 | `poll.yaml`             | Page de vote                                                  |
-| Deployment          | `result`               | `result.yaml`           | Page des résultats                                            |
+| Type                    | Nom                    | Vient de                | Rôle                                                          |
+| ----------------------- | ---------------------- | ----------------------- | ------------------------------------------------------------- |
+| Namespace               | `bernstein`            | `namespace.yaml`        | Le « dossier » qui contient tout le reste                     |
+| ConfigMap               | `app-config-<hash>`    | `kustomization.yaml`    | Adresses et noms (Redis, Postgres)                            |
+| ConfigMap               | `postgres-init-<hash>` | `kustomization.yaml`    | Le fichier `schema.sql`                                       |
+| Secret                  | `app-secrets-<hash>`   | `kustomization.yaml`    | Les mots de passe (`secrets.env`)                             |
+| Service                 | `postgres`             | `postgres.yaml`         | Adresse interne de la base                                    |
+| Service                 | `redis`                | `redis.yaml`            | Adresse interne de la file                                    |
+| Service                 | `poll`                 | `poll.yaml`             | **IP publique** de la page de vote                            |
+| Service                 | `result`               | `result.yaml`           | **IP publique** de la page des résultats                      |
+| PodDisruptionBudget     | `poll`, `result`       | `pdb.yaml`              | Au moins 1 pod de chaque toujours disponible pendant un drain |
+| NetworkPolicy           | 7 (voir partie 8 ter)  | `network-policies.yaml` | Tout fermé, puis seulement les flux de l'app                  |
+| HorizontalPodAutoscaler | `poll`                 | `hpa.yaml`              | Poll entre 2 et 6 pods selon le CPU                           |
+| StatefulSet             | `postgres`             | `postgres.yaml`         | La base, avec son disque                                      |
+| Deployment              | `redis`                | `redis.yaml`            | La file de votes                                              |
+| Deployment              | `worker`               | `worker.yaml`           | Redis → Postgres                                              |
+| Deployment              | `poll`                 | `poll.yaml`             | Page de vote                                                  |
+| Deployment              | `result`               | `result.yaml`           | Page des résultats                                            |
 
 ### Ce que Kubernetes crée tout seul à partir de ça
 
@@ -92,7 +94,7 @@ Service postgres / redis / poll / result ──► EndpointSlice (la liste des I
 Service poll / result (LoadBalancer) ──► dans Azure : 1 IP publique + 1 règle sur le load balancer du cluster
 ```
 
-Total : **7 pods** (2 poll, 2 result, 1 worker, 1 redis, 1 postgres).
+Total : **7 pods** au repos (2 poll, 2 result, 1 worker, 1 redis, 1 postgres), jusqu'à 11 quand le HPA monte Poll à 6.
 
 À retenir : un **Service ne pointe jamais vers un pod précis**. Il pointe vers un **label** (`app.kubernetes.io/name: postgres`). Kubernetes tient à jour la liste des IP des pods qui portent ce label **et** qui sont ready (l'EndpointSlice).
 
@@ -831,14 +833,16 @@ Le load balancing se fait donc **à 2 niveaux** : Azure répartit entre les **n�
 
 **`externalTrafficPolicy`** : non écrit, donc à sa valeur par défaut, `Cluster`. Chaque nœud accepte le trafic, même s'il n'a pas de pod Poll, et kube-proxy le fait suivre (1 saut de plus possible). L'app voit l'IP d'un nœud, pas celle du visiteur. L'autre valeur, `Local`, garde l'IP du visiteur, mais n'envoie qu'aux nœuds qui ont un pod ready. Pendant une mise à jour, Azure continuerait alors d'envoyer vers un nœud dont les pods partent, jusqu'à ce que sa sonde s'en rende compte. Nos apps n'utilisent pas l'IP du visiteur : `Cluster` est plus sûr ([ADR 0004](../adr/0004-public-access-loadbalancer.md)).
 
-### 2 replicas
+### Pas de `replicas` : c'est le HPA qui décide
 
 ```yaml
 spec:
-  replicas: 2
+  # No `replicas`: the HPA in hpa.yaml sets it (2 to 6). A value here would reset it on every apply.
 ```
 
-C'est la page que voit l'évaluateur. Avec 2 pods, il en reste toujours un pendant une mise à jour ou un drain. Chaque vote est une requête courte et sans état (le votant est identifié par un cookie), donc n'importe quel pod peut répondre.
+C'est la page que voit l'évaluateur. Le nombre de pods est fixé par le HPA (partie 8 quater) : **2 au repos**, jusqu'à 6 sous charge. Avec au moins 2 pods, il en reste toujours un pendant une mise à jour ou un drain. Chaque vote est une requête courte et sans état (le votant est identifié par un cookie), donc n'importe quel pod peut répondre.
+
+Pourquoi enlever `replicas` du fichier : sinon chaque `kubectl apply` (donc chaque `scripts/deploy.sh`) remettrait 2 pods, même si le HPA en voulait 6.
 
 Avec 2 replicas, la stratégie (`maxSurge: 1`, `maxUnavailable: 0`) donne : 2 pods, puis 3 (un nouveau démarre), puis 2 (un ancien s'arrête), puis 3, puis 2. Il y a **toujours au moins 2 pods** qui servent (mesuré pendant un `rollout restart`).
 
@@ -1210,6 +1214,61 @@ ingress:
 
 ---
 
+## 8 quater. `k8s/hpa.yaml`, ligne par ligne
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: poll
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: poll
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+- `scaleTargetRef` : l'objet dont le HPA change `replicas`, ici le Deployment `poll`.
+- `minReplicas: 2` : jamais moins, pour les rollouts et les drains.
+- `maxReplicas: 6` : 4 pods de plus = 200m demandés. Tout tient encore sur un seul nœud pendant un drain (1552m sur 1900m).
+- `averageUtilization: 70` : 70 % de la **request** CPU, pas du nœud. La request de Poll est 50m, donc la cible est 35m par pod. Au repos, Poll consomme 2m.
+
+**Le calcul**, toutes les 15 s : `pods voulus = arrondi au-dessus (pods actuels × utilisation mesurée / cible)`. Exemple mesuré : 2 pods à 263 % → 2 × 263 / 70 = 7,5, donc 8, plafonné à 6 (atteint en deux pas : 4, puis 6). Rien ne bouge si l'écart est sous 10 %.
+
+**D'où vient le CPU** : metrics-server, installé par AKS dans `kube-system`. C'est lui que lit `kubectl top`.
+
+**Le comportement par défaut** (rien d'écrit dans le fichier) :
+
+- montée **immédiate** : jusqu'à +4 pods ou +100 % toutes les 15 s ;
+- descente après **5 minutes** de recommandation plus basse : une pause courte dans le trafic ne retire pas de pods.
+
+### Mesuré sur AKS
+
+Charge : 4 pods busybox qui bouclent sur le Service `poll`, depuis un autre namespace (depuis `bernstein`, nos NetworkPolicies bloquent).
+
+- Charge lancée à 18:23:10. Le HPA lit 263 % à 18:24:39 (les métriques mettent ~1,5 min). 2 → 4 pods à 18:24:54, 4 → 6 à 18:25:10.
+- Drain du nœud sans Postgres avec 6 pods Poll : 3 évincés d'un coup, tout tient sur l'autre nœud.
+- Charge arrêtée à 18:27:25. 6 → 5 à 18:33:40, 5 → 2 à 18:34:41 : à chaque fois 5 min après la baisse de la recommandation.
+- **0 erreur sur 13 000 requêtes** d'une sonde dans le cluster, pendant toute la séquence.
+
+### Questions probables
+
+- _« Comment autoscalez-vous Poll ? »_ Un HPA sur le CPU, 2 à 6 pods, cible 70 % de la request. Démo : de la charge, puis `kubectl -n bernstein get hpa -w`.
+- _« Pourquoi pas de HPA sur Result ? »_ Sa charge ne grandit presque pas avec le nombre de spectateurs (une requête SQL par seconde et par pod), et ses WebSockets restent sur le pod où elles se sont ouvertes ([ADR 0008](../adr/0008-result-deployment.md)).
+- _« Pourquoi enlever `replicas` du Deployment ? »_ Sinon chaque `apply` remet 2 pods et se bat avec le HPA.
+- _« Que se passe-t-il au-delà de 6 ? »_ Rien : les 2 nœuds ont un CPU fixe. Il faudrait un 3e nœud, donc le cluster autoscaler.
+
+---
+
 ## 9. Scénarios : ce qui se passe quand…
 
 Pour chaque scénario : ce que fait Kubernetes, ce que voit l'utilisateur, et ce qui reste à améliorer (avec le ticket). État décrit : `main` actuel, avec Poll et Result exposés par des Services `LoadBalancer` (#24 à #26).
@@ -1323,14 +1382,17 @@ Après un redémarrage de Postgres, le worker est redémarré par sa liveness et
 
 ### 9.7 Monter en charge (scale)
 
+Automatique pour Poll : le HPA passe de 2 à 6 pods selon le CPU (partie 8 quater). **Mesuré** : 2 → 6 pods en 2 minutes après le début de la charge, retour à 2 environ 7 minutes après la fin, 0 erreur.
+
+À la main :
+
 ```bash
-kubectl -n bernstein scale deploy/poll --replicas=4
+kubectl -n bernstein scale deploy/result --replicas=4
 ```
 
 - 2 pods de plus sont créés. Le Service les ajoute à la répartition dès qu'ils sont ready.
-- **Attention** : le prochain déploiement (`scripts/deploy.sh`) remet `replicas: 2`, la valeur du fichier.
-- Automatique : un HPA sur Poll, selon le CPU (#33). Il utilise les `requests` comme base de calcul : 70 % d'utilisation = 70 % de `requests.cpu`.
-- Les nœuds : 2 aujourd'hui, 3 possibles au maximum avec le quota étudiant de 6 vCPU (#33, à décider).
+- **Attention** : le prochain déploiement remet `replicas: 2`, la valeur du fichier. Sur Poll, `scale` ne sert à rien : le HPA reprend la main à son passage suivant (toutes les 15 s).
+- Les nœuds : 2 aujourd'hui, fixes. Le HPA ajoute des pods, pas du CPU. Un 3e nœud demanderait le cluster autoscaler (quota étudiant de 6 vCPU, [ADR 0026](../adr/0026-poll-hpa.md)).
 
 ### 9.8 Arrêt et redémarrage du cluster (`az aks stop` / `start`)
 

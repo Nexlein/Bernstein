@@ -45,14 +45,22 @@ Pour changer : `resources` dans `k8s/redis.yaml`, puis redéployer sans rebuild 
 
 ## 4. « Comment autoscaler Poll ? »
 
-Pas en place aujourd'hui (#33). Ce serait un HorizontalPodAutoscaler sur le CPU : metrics-server tourne déjà dans AKS. Le pourcentage se calcule sur `requests.cpu` (50m pour Poll ; 100m mesurés sous charge, donc 200 %). La vraie limite est la place sur les nœuds : les requests font déjà 1662m, presque un nœud entier (1900m). Au-delà, il faut un 3e nœud (cluster autoscaler ; 3 nœuds au maximum avec le quota de 6 vCPU). **Non mesuré** : pas de test de charge avec un HPA.
+C'est en place : un HPA sur le CPU, **2 à 6 pods**, cible 70 % de la request (35m sur 50m). metrics-server fournit le CPU. Montée immédiate, descente après 5 minutes. Mesuré : 2 → 6 pods en 2 minutes sous charge, retour à 2 environ 7 minutes après, **0 erreur sur 13 000 requêtes**. Au-delà de 6, il faudrait un 3e nœud (cluster autoscaler) : les 2 nœuds ont un CPU fixe.
 
 ```bash
-kubectl -n bernstein autoscale deploy/poll --min=2 --max=4 --cpu=70% --dry-run=server -o yaml   # l'objet, sans le créer
-kubectl -n bernstein scale deploy/poll --replicas=4   # à la main ; le prochain deploy remet 2
+kubectl -n bernstein get hpa poll -w   # TARGETS (CPU / cible) et REPLICAS en direct
+kubectl -n bernstein top pods -l app.kubernetes.io/name=poll
 ```
 
-Détails : [guide 9.7](k8s-study-guide.md#97-monter-en-charge-scale), [ADR 0018](../adr/0018-resource-requests-and-limits.md).
+Charge pour la démo, depuis un autre namespace (nos NetworkPolicies bloquent un client dans `bernstein`) :
+
+```bash
+kubectl create namespace load-test
+kubectl -n load-test create deployment load --image=busybox:1.37 --replicas=4 -- sh -c 'while true; do wget -q -O /dev/null http://poll.bernstein/ || sleep 1; done'
+kubectl delete namespace load-test   # fin de la charge ; Poll revient à 2 environ 5 minutes plus tard
+```
+
+Détails : [ADR 0026](../adr/0026-poll-hpa.md), [guide 8 quater](k8s-study-guide.md#8-quater-k8shpayaml-ligne-par-ligne).
 
 ## 5. « Sauvegarde et failover de la base ? »
 
