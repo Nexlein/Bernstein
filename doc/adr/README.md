@@ -36,12 +36,13 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 | [0022](0022-no-https.md)                     | HTTPS              | Plain HTTP on port 80, no domain name                                               | Why no HTTPS? What would it take?                                                         |
 | [0023](0023-security-posture.md)             | Security           | Hardened containers, private data stores; cluster defaults kept and listed          | What is exposed? Who can reach the API server? How are Secrets stored?                    |
 | [0024](0024-observability.md)                | Observability      | `kubectl` (probes, events, logs, `top`), no centralized monitoring or alerting      | How do you know it is broken? How do you debug a pod? Why no Prometheus?                  |
+| [0025](0025-network-policies.md)             | Network policies   | Default deny in and out, then only the app's flows; enforced by Cilium              | Who can talk to PostgreSQL? Why egress too? What did the switch to Cilium cost?           |
 
 ## By file
 
 | File                                  | ADRs                                                                                                                                                                                                                                   |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Azure resources (cluster, registry)   | [0001](0001-aks-cluster.md), [0002](0002-acr-registry.md), [0021](0021-no-infrastructure-as-code.md), [0023](0023-security-posture.md)                                                                                                 |
+| Azure resources (cluster, registry)   | [0001](0001-aks-cluster.md), [0002](0002-acr-registry.md), [0021](0021-no-infrastructure-as-code.md), [0023](0023-security-posture.md), [0025](0025-network-policies.md)                                                               |
 | `k8s/kustomization.yaml`              | [0003](0003-kustomize.md), [0005](0005-image-tags-git-sha.md), [0006](0006-secrets-secretgenerator.md), [0017](0017-deploy-script.md)                                                                                                  |
 | `k8s/secrets.env.example`             | [0006](0006-secrets-secretgenerator.md)                                                                                                                                                                                                |
 | `k8s/postgres.yaml`, `k8s/schema.sql` | [0007](0007-postgres-statefulset.md), [0018](0018-resource-requests-and-limits.md), [0019](0019-postgres-backup.md)                                                                                                                    |
@@ -50,6 +51,7 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 | `k8s/poll.yaml`                       | [0004](0004-public-access-loadbalancer.md), [0011](0011-poll-deployment.md), [0012](0012-graceful-shutdown.md), [0013](0013-pod-anti-affinity.md), [0015](0015-poll-gunicorn-threads.md), [0018](0018-resource-requests-and-limits.md) |
 | `k8s/result.yaml`                     | [0004](0004-public-access-loadbalancer.md), [0008](0008-result-deployment.md), [0012](0012-graceful-shutdown.md), [0013](0013-pod-anti-affinity.md), [0018](0018-resource-requests-and-limits.md)                                      |
 | `k8s/pdb.yaml`                        | [0014](0014-pod-disruption-budgets.md)                                                                                                                                                                                                 |
+| `k8s/network-policies.yaml`           | [0025](0025-network-policies.md)                                                                                                                                                                                                       |
 | `scripts/deploy.sh`                   | [0005](0005-image-tags-git-sha.md), [0017](0017-deploy-script.md)                                                                                                                                                                      |
 | `tests/zero-downtime.sh`              | [0016](0016-zero-downtime-test.md)                                                                                                                                                                                                     |
 
@@ -59,7 +61,7 @@ What breaks, and where we explain why we accept it:
 
 - **PostgreSQL has 1 replica.** Draining its node made Result fail 47 requests over 39 s while the disk moved. Only a replicated database would fix it. [0007](0007-postgres-statefulset.md), [0014](0014-pod-disruption-budgets.md) No automated backup: a manual dump. [0019](0019-postgres-backup.md)
 - **Redis has 1 replica, in memory.** A Redis restart (about 4 s) makes Poll unready; votes still queued in Redis are lost if it crashes. [0009](0009-redis-queue.md) When full (100 MB), it refuses new votes instead of crashing. [0018](0018-resource-requests-and-limits.md)
-- **Cluster security defaults.** Public API server without IP ranges, local accounts on, no NetworkPolicy, no Pod Security Standards enforced. [0023](0023-security-posture.md)
+- **Cluster security defaults.** Public API server without IP ranges, local accounts on, no Pod Security Standards enforced. [0023](0023-security-posture.md)
 - **HTTP only.** Votes and the voter cookie travel in clear. [0022](0022-no-https.md)
 - **No alerting, no log history.** Nobody is told when the app breaks; logs go with the pod, and only the last crashed run is kept. [0024](0024-observability.md)
 - **The worker has no `SIGTERM` hook.** A vote popped in the sub-millisecond window before its upsert is lost if the pod stops then. [0010](0010-worker-deployment.md)

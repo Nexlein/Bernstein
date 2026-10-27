@@ -11,6 +11,7 @@ We harden what runs in the cluster, and keep the cluster-level defaults of a stu
 - **Only Poll and Result are public, on port 80.** Checked inside the cluster: 2 `LoadBalancer` Services (poll and result, port 80), no `NodePort`, everything else `ClusterIP`. Checked from the internet: both public IPs answer on 80; 22, 443, 5432 (PostgreSQL) and 6379 (Redis) are closed. Redis and PostgreSQL only have a `ClusterIP` Service ([ADR 0007](0007-postgres-statefulset.md), [ADR 0009](0009-redis-queue.md)), and the worker has none ([ADR 0010](0010-worker-deployment.md)).
 - **Containers:** all 5 run as non-root, with no privilege escalation and every Linux capability dropped. Poll, Result and the worker also have a read-only root filesystem ([ADR 0008](0008-result-deployment.md), [ADR 0010](0010-worker-deployment.md), [ADR 0011](0011-poll-deployment.md)). Redis and PostgreSQL do not have one yet; #76 reviews it with the Pod Security Standards.
 - **Secrets:** no password in git; the Secret is built from a gitignored file ([ADR 0006](0006-secrets-secretgenerator.md)). The registry is private and the cluster pulls through its managed identity, with no pull secret ([ADR 0002](0002-acr-registry.md)).
+- **Network:** default deny in the namespace, in and out; only the app's flows are allowed, enforced by Cilium ([ADR 0025](0025-network-policies.md)). Checked: a Poll pod reaches Redis, but not PostgreSQL or the internet.
 - **Resources:** every container has CPU and memory limits, so one runaway container cannot starve a node ([ADR 0018](0018-resource-requests-and-limits.md)).
 
 ## Known limits
@@ -20,7 +21,6 @@ We harden what runs in the cluster, and keep the cluster-level defaults of a stu
 | The Kubernetes API server is public, with no authorized IP ranges (authentication still required) | `az aks show --query apiServerAccessProfile`: `null`                  | authorized IP ranges, or a private cluster            |
 | Local accounts enabled, no Microsoft Entra ID integration (Kubernetes RBAC only)                  | `disableLocalAccounts: false`, `aadProfile: null`, `enableRbac: true` | Entra ID with Azure RBAC, local accounts disabled     |
 | Secrets are only base64 in the API; no KMS encryption layer                                       | `securityProfile.azureKeyVaultKms: null`                              | KMS encryption with keys in Azure Key Vault           |
-| No NetworkPolicy: any pod can reach Redis and PostgreSQL                                          | `networkProfile.networkPolicy: none`                                  | default deny, then allow only the needed flows (#34)  |
 | Pod Security Standards not enforced on the namespace                                              | no `pod-security.kubernetes.io` labels                                | the `restricted` level (#76)                          |
 | No vulnerability scan of the images                                                               | no scan step in CI                                                    | a scan in CI that fails on critical issues (#77)      |
 | No automatic Kubernetes upgrade (node OS images are updated automatically)                        | `upgradeChannel: null`, `nodeOsUpgradeChannel: NodeImage`             | the `patch` upgrade channel with a maintenance window |
@@ -36,7 +36,7 @@ The facts behind the table:
 ## Trade-offs
 
 - Cluster-level hardening needs the Owner role and changes how everyone connects: an IP allowlist breaks when a home IP changes or for an evaluator at an unknown address; Entra ID needs an admin group and accounts for each person.
-- Without NetworkPolicy, a compromised Poll pod could reach PostgreSQL directly. The data store still requires its password.
+- The NetworkPolicies filter by pod labels, inside the cluster only: the public port 80 of Poll and Result stays open to everyone ([ADR 0004](0004-public-access-loadbalancer.md)).
 
 ## Alternatives rejected (for now)
 

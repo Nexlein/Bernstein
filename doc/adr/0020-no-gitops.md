@@ -10,7 +10,7 @@ No Argo CD or Flux in the cluster. Deployments are pushed from the operator's ma
 
 - **What GitOps is:** a controller in the cluster pulls the desired state from a git repository and keeps reconciling the cluster to it. **Fact:** on AKS, Flux v2 is offered as the `microsoft.flux` cluster extension; its `fluxConfigurations` "sync your Git repository sources to the cluster and reconcile the cluster to the desired state". ([Microsoft Learn: GitOps with Flux v2](https://learn.microsoft.com/en-us/azure/azure-arc/kubernetes/tutorial-use-gitops-flux2)) [Argo CD](https://argo-cd.readthedocs.io/en/stable/) works the same way.
 - **The subject's test is a push:** the evaluator clones the repo, sets their credentials and launches the deployment themselves. With GitOps, they would first install a controller, then point it to a repository they can write to (a fork), with its credentials. One more component and one more step for no graded gain.
-- **Capacity:** a controller is several more pods. The requests of both nodes already add up to 1712m CPU, close to the 1900m that one node offers and that a drain needs ([ADR 0018](0018-resource-requests-and-limits.md)).
+- **Capacity:** a controller is several more pods. The requests of both nodes already add up to 1662m CPU, close to the 1900m that one node offers and that a drain needs ([ADR 0018](0018-resource-requests-and-limits.md)).
 - `kubectl apply` is idempotent, and our manifests in git stay the single source of truth: what runs is what the last deploy applied.
 
 ## Trade-offs
