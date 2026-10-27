@@ -1,6 +1,6 @@
 # Guide d'étude Kubernetes (préparation soutenance)
 
-Support de révision : ce que `kubectl apply -k k8s/` crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans les [ADR](../adr/README.md) (un fichier par choix) ; ce guide explique le **comment**.
+Support de révision : ce que le déploiement (`scripts/deploy.sh`, qui applique `k8s/`) crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans les [ADR](../adr/README.md) (un fichier par choix) ; ce guide explique le **comment**.
 
 Méthode conseillée : lire une partie, puis fermer le guide et réexpliquer le fichier à voix haute, ligne par ligne. Chaque partie se termine par des questions probables en soutenance.
 
@@ -110,7 +110,7 @@ Kubernetes n'a **pas** d'ordre de démarrage : tout est créé en même temps. �
 
 ## 2. `k8s/kustomization.yaml`, ligne par ligne
 
-C'est le **point d'entrée unique**. `kubectl apply -k k8s/` le lit, assemble les fichiers, applique les transformations et envoie le résultat au cluster. `kubectl kustomize k8s/` montre le résultat sans rien envoyer.
+C'est le **point d'entrée** des manifests. `kubectl apply -k <dossier>` lit le `kustomization.yaml`, assemble les fichiers, applique les transformations et envoie le résultat au cluster. Pour l'app, on ne le lance pas directement sur `k8s/` : `scripts/deploy.sh` l'applique à travers un overlay qui ajoute les images (voir « Les images »). `kubectl kustomize k8s/` montre le résultat sans rien envoyer.
 
 ### En-tête
 
@@ -157,20 +157,25 @@ Les fichiers à assembler. L'ordre n'a pas d'importance pour le résultat : `kub
 
 ### Les images
 
+Il n'y a **pas** de bloc `images` dans `k8s/kustomization.yaml`. Les manifests écrivent l'image avec un nom **générique** (`image: poll`, `worker`, `result`). C'est `scripts/deploy.sh` qui pose le registry et le tag au moment du déploiement, dans un overlay qu'il génère à chaque fois (`.deploy/kustomization.yaml`, gitignoré) :
+
 ```yaml
+resources:
+  - ../k8s
 images:
   - name: result
-    newName: bernsteinacrmaeva.azurecr.io/result
-    newTag: f880145
+    newName: <registry>/result
+    newTag: 878cebc
 ```
 
-Dans les manifests, l'image est écrite avec un nom **générique** (`image: result`). Ce bloc la remplace partout par `bernsteinacrmaeva.azurecr.io/result:f880145`. Même chose pour `worker` et `poll`.
-
+- `resources: ../k8s` : l'overlay reprend tout `k8s/` tel quel.
 - `name` : le nom générique à chercher dans les manifests.
-- `newName` : l'adresse réelle dans le registry. Un évaluateur avec son propre registry ne change que cette ligne.
-- `newTag` : la version. La CI (#12) y écrira le SHA du commit. **Changer le tag change le Pod template, donc déclenche un rolling update.**
+- `newName` : l'adresse réelle, construite à partir de `REGISTRY`, le registry de celui qui déploie.
+- `newTag` : le SHA court du commit, ou `<sha>-dirty-<date>` si `poll-application/` a des modifications non commitées. **Changer le tag change le Pod template, donc déclenche un rolling update.**
 
-`postgres` et `redis` ne sont pas listés : ils utilisent des images publiques (`postgres:18-alpine`, `redis:8-alpine`) écrites directement dans leur manifest.
+Pourquoi un overlay généré : l'évaluateur ne peut pas tirer les images depuis notre registry, et le script ne modifie aucun fichier suivi par git ([ADR 0017](../adr/0017-deploy-script.md)). **Conséquence** : `kubectl apply -k k8s/` seul déploie des images sans registry, qui finissent en `ImagePullBackOff`. On déploie toujours avec le script.
+
+`postgres` et `redis` ne sont pas concernés : ils utilisent des images publiques (`postgres:18-alpine`, `redis:8-alpine`) écrites directement dans leur manifest.
 
 ### Les ConfigMaps générés
 
@@ -222,7 +227,7 @@ Lit `k8s/secrets.env` (format `CLÉ=valeur`, une par ligne) et crée le Secret `
 
 - _« Que se passe-t-il si je change `POSTGRES_PORT` ? »_ Le hash d'`app-config` change, et les Deployments qui l'utilisent (poll, worker, result) font un rolling update. Postgres aussi : c'est un StatefulSet qui lit `app-config`, donc il redémarre.
 - _« Pourquoi pas de mot de passe dans le ConfigMap ? »_ Un ConfigMap n'a aucune protection particulière. Les mots de passe vont dans un Secret, que les droits RBAC peuvent restreindre séparément.
-- _« Comment l'évaluateur met-il son registry ? »_ Il change `newName` dans `images`, sans toucher aux manifests.
+- _« Comment l'évaluateur met-il son registry ? »_ Il le passe au script : `REGISTRY=<nom>.azurecr.io scripts/deploy.sh`. Aucun fichier à modifier.
 - _« Pourquoi `labels` et pas `commonLabels` ? »_ Pour ne pas modifier les selectors, qui sont immuables sur un Deployment.
 
 ---
@@ -677,7 +682,7 @@ securityContext:
       containerPort: 80
 ```
 
-- `image: worker` : un nom générique, remplacé par Kustomize (bloc `images`, partie 2) en `bernsteinacrmaeva.azurecr.io/worker:f880145`.
+- `image: worker` : un nom générique, que `scripts/deploy.sh` remplace par `<registry>/worker:<tag>` (partie 2, « Les images »).
 - `ports.name: http` : un nom réutilisé par les probes (`port: http`).
 
 ### Les variables
@@ -1079,11 +1084,11 @@ Pour chaque scénario : ce que fait Kubernetes, ce que voit l'utilisateur, et ce
 
 ```bash
 cp k8s/secrets.env.example k8s/secrets.env   # puis remplir POSTGRES_PASSWORD
-kubectl apply -k k8s/
-kubectl -n bernstein get pods -w             # suivre le démarrage (Ctrl+C pour quitter)
+REGISTRY=<nom>.azurecr.io scripts/deploy.sh  # build, push, déploiement, attente, URL publiques
+kubectl -n bernstein get pods -w             # dans un autre terminal, pour suivre le démarrage
 ```
 
-1. Kustomize construit les 15 objets (partie 1). Sans `secrets.env`, il s'arrête là.
+1. Le script vérifie les prérequis : sans `secrets.env` ou sans mot de passe, il s'arrête avant tout changement. Il construit et pousse les 3 images, puis Kustomize construit les 15 objets (partie 1).
 2. Tout est créé **en même temps** : aucun ordre garanti.
 3. Postgres attend son disque (quelques dizaines de secondes), puis initialise la base et la table `votes`.
 4. Pendant ce temps, le worker affiche `Waiting for db` et Result réessaie : leur readiness est rouge.
@@ -1099,11 +1104,8 @@ kubectl -n bernstein get svc poll result   # colonne EXTERNAL-IP
 C'est **le** test noté. Par exemple, on change la couleur dans Poll :
 
 ```bash
-# après build et push de la nouvelle image avec le tag <sha>
-# (à la main aujourd'hui, par la CI après #12)
-# dans k8s/kustomization.yaml : newTag: <sha> pour poll
-kubectl apply -k k8s/
-kubectl -n bernstein rollout status deploy/poll
+# après la modification du code, commitée ou non (le tag devient alors <sha>-dirty-<date>)
+REGISTRY=<nom>.azurecr.io tests/zero-downtime.sh -- scripts/deploy.sh
 ```
 
 Le tag change, donc le Pod template change, donc le Deployment crée un **nouveau ReplicaSet**. Avec `replicas: 2`, `maxSurge: 1` et `maxUnavailable: 0` :
@@ -1123,11 +1125,11 @@ t5  ancien : 0                                nouveau : 2
 
 Chaque ancien pod passe d'abord **5 s en `preStop`** : il sort des endpoints tout en servant encore, puis il reçoit `SIGTERM` et termine ses requêtes (parties 7 et 8).
 
-**Mesuré sur AKS** : requêtes en continu (toutes les 50 ms) sur les 2 IP publiques pendant `kubectl rollout restart deploy/poll deploy/result` : **0 erreur sur 2461 requêtes**. Le script réutilisable du ticket #29 reste à écrire.
+**Mesuré sur AKS** : requêtes en continu (toutes les 50 ms) sur les 2 IP publiques pendant `kubectl rollout restart deploy/poll deploy/result` : **0 erreur sur 2461 requêtes**. Même test avec `tests/zero-downtime.sh` (#29, [ADR 0016](../adr/0016-zero-downtime-test.md)) : 0 erreur sur 975, puis sur 1996 requêtes.
 
 ### 9.3 Changement de config ou de mot de passe
 
-On modifie une valeur dans `app-config` ou dans `secrets.env`, puis `kubectl apply -k k8s/`.
+On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on redéploie sans rebuild : `REGISTRY=<nom>.azurecr.io TAG=<tag actuel> scripts/deploy.sh`. Le tag actuel se lit avec `kubectl -n bernstein get deploy poll -o jsonpath='{..image}'`. `kubectl apply -k k8s/` seul remettrait des images sans registry.
 
 - Le **hash** du ConfigMap ou du Secret change, donc son nom change. Les Pod templates qui le référencent changent aussi, et **tous les consommateurs** font un rolling update.
 - Pour `app-config` : poll, worker, result, **et postgres** (il lit `POSTGRES_DB` et `POSTGRES_USER`). Postgres a 1 seul pod, donc il est arrêté puis recréé : une coupure courte de la base.
@@ -1190,7 +1192,7 @@ kubectl -n bernstein scale deploy/poll --replicas=4
 ```
 
 - 2 pods de plus sont créés. Le Service les ajoute à la répartition dès qu'ils sont ready.
-- **Attention** : le prochain `kubectl apply -k k8s/` remet `replicas: 2`, la valeur du fichier.
+- **Attention** : le prochain déploiement (`scripts/deploy.sh`) remet `replicas: 2`, la valeur du fichier.
 - Automatique : un HPA sur Poll, selon le CPU (#33). Il utilise les `requests` comme base de calcul : 70 % d'utilisation = 70 % de `requests.cpu`.
 - Les nœuds : 2 aujourd'hui, 3 possibles au maximum avec le quota étudiant de 6 vCPU (#33, à décider).
 
