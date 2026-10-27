@@ -17,6 +17,7 @@
 
 - Two public IPs instead of one. Each Standard public IP is billed per hour ([Azure: IP address pricing](https://azure.microsoft.com/pricing/details/ip-addresses/)); small next to the nodes.
 - No host or path routing, no TLS termination. Not required by the subject.
+- The two public IPs stayed the same across every `az aks stop` / `az aks start` of our cluster (observed several times; Microsoft's docs promise nothing about it). The evaluator can be given the IPs once.
 - **`externalTrafficPolicy: Cluster`:** every node accepts the traffic and kube-proxy forwards it to a ready pod, possibly on the other node (one extra hop). The app sees a node IP, not the visitor's. **Fact:** `Local` keeps the client IP but only sends traffic to nodes that run a ready pod of the Service. ([Kubernetes docs: Preserving the client source IP](https://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/#preserving-the-client-source-ip)) With `Local`, a node whose pods are being replaced keeps getting traffic until the Azure health probe notices: a rollout risk that buys nothing, since the apps do not use the client IP.
 - Zero downtime still depends on us: during a rollout, a terminating pod can get traffic until its endpoint is removed everywhere. **Fact:** endpoint removal and `SIGTERM` happen in parallel. ([Kubernetes docs: Pod termination](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)) Handled by readiness probes, `maxUnavailable: 0` and a `preStop` sleep ([ADR 0012](0012-graceful-shutdown.md)).
 
