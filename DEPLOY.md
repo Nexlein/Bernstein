@@ -191,6 +191,40 @@ az group delete --name <resource-group> --yes   # every resource in the group: c
 | `tests/zero-downtime.sh` shows timeouts on Poll **and** Result at the same seconds                                                                  | the test machine's own connection is busy (a big push, a system update downloading)   | rerun from an idle connection or another machine. A real rollout problem only hits the app being updated                               |
 | Votes fail with HTTP 500, `kubectl -n bernstein logs deploy/poll` shows `OutOfMemoryError`                                                          | the Redis queue is full (100 MB): the worker or PostgreSQL has been down for a while  | bring the worker and PostgreSQL back: the queue drains and votes work again ([ADR 0018](doc/adr/0018-resource-requests-and-limits.md)) |
 
+### Debug a broken pod
+
+Start with the pods and the recent events, then follow the pod's `STATUS` below. Each case was reproduced on AKS with throwaway pods; the quoted lines are what the commands printed. Why there is no monitoring tool beyond these commands: [ADR 0024](doc/adr/0024-observability.md).
+
+```bash
+kubectl -n bernstein get pods -o wide                      # STATUS, READY, RESTARTS, node
+kubectl -n bernstein get events --sort-by=.lastTimestamp   # newest last: pulls, probe failures, back-offs
+kubectl -n bernstein describe pod <pod>                    # the pod's state, last state and events
+```
+
+**`Pending`, no node.** The scheduler found no node with room for it. The events of `describe pod` say why, for example `0/2 nodes are available: 2 Insufficient cpu.`: the pod's requests do not fit in what is left on any node. `kubectl describe nodes` shows each node's "Allocated resources". Lower the requests or add a node ([ADR 0018](doc/adr/0018-resource-requests-and-limits.md) for our sizing).
+
+**`CrashLoopBackOff` or `Error`, `RESTARTS` going up.** The container starts, then exits. Read what it printed:
+
+```bash
+kubectl -n bernstein logs <pod>              # while it waits to restart: the run that just crashed
+kubectl -n bernstein logs <pod> --previous   # once it runs again: the run that crashed
+```
+
+While the pod waits (`Error`, `CrashLoopBackOff`), `--previous` fails with `unable to retrieve container logs`: the crashed run is still the current one. Only the last crashed run is kept. Then look at `Last State` in `describe pod`:
+
+- `Reason: Error`, `Exit Code: 1` (or another code): the app exited by itself; its logs say why.
+- `Reason: OOMKilled`, `Exit Code: 137`: the container went over its memory limit and was killed. Raise `resources.limits.memory` in `k8s/<app>.yaml`, or find what uses the memory.
+
+**`Running` but `READY 0/1`.** The process runs, but its readiness probe fails, so its Service sends it no traffic. The events of `describe pod` show the probe answer; in our test, a pod without `/readyz`:
+
+```text
+Readiness probe failed: HTTP probe failed with statuscode: 404
+```
+
+Our apps answer `503` when their dependency does not respond: Redis for Poll, PostgreSQL for Result, both for the worker ([app README](poll-application/README.md)). Check that dependency next: `kubectl -n bernstein get pods`, then `kubectl -n bernstein logs deploy/redis` or `kubectl -n bernstein logs postgres-0`. A `404` from one of our apps means a wrong probe path in `k8s/<app>.yaml`.
+
+**`ImagePullBackOff`:** see the first row of the table above.
+
 ## 8. Back up and restore the votes
 
 There is no automatic backup ([ADR 0019](doc/adr/0019-postgres-backup.md)). Dump the database to your machine, outside the repository:
