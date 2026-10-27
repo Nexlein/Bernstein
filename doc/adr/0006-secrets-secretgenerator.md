@@ -4,13 +4,13 @@
 
 ## Decision
 
-The evaluator copies `k8s/secrets.env.example` to `k8s/secrets.env` and fills in `POSTGRES_PASSWORD` (and optionally `REDIS_PASSWORD`). A `secretGenerator` in `k8s/kustomization.yaml` turns it into the `app-secrets` Secret on `kubectl apply -k k8s/`. The real file is gitignored.
+The evaluator copies `k8s/secrets.env.example` to `k8s/secrets.env` and fills in `POSTGRES_PASSWORD` (and optionally `REDIS_PASSWORD`). A `secretGenerator` in `k8s/kustomization.yaml` turns it into the `app-secrets` Secret on deploy (`scripts/deploy.sh`). The real file is gitignored.
 
 ## Why
 
 - **Fact:** the subject excludes `POSTGRES_PASSWORD` and the cloud credentials from the delivery, but asks us to document how and where to set them; the evaluator must clone, set the credentials and deploy alone. ([subject PDF](../subject/bernstein-project.pdf)) Here: one file to fill, then the same single deploy command.
 - **Fact:** `secretGenerator` builds a Secret from an env file and appends a content hash to its name, like `configMapGenerator`. ([Kubernetes docs: Managing Secrets using Kustomize](https://kubernetes.io/docs/tasks/configmap-secret/managing-secret-using-kustomize/)) Changing a password rolls the Deployments that use it, with no manual restart.
-- If `secrets.env` is missing, `kubectl apply -k` fails before creating anything. Nothing deploys without its secrets.
+- If `secrets.env` is missing or `POSTGRES_PASSWORD` is empty, `scripts/deploy.sh` stops before building or creating anything (and `kubectl apply -k` would fail on a missing file anyway). Nothing deploys without its secrets.
 - The Secret gets the `bernstein` namespace from the kustomization, so it always lands next to the pods that read it.
 - No registry secret: AKS pulls from ACR through `--attach-acr` ([ADR 0002](0002-acr-registry.md)).
 

@@ -4,7 +4,7 @@
 
 ## Decision
 
-Plain Kubernetes YAML in `k8s/`, assembled by `k8s/kustomization.yaml`, deployed with `kubectl apply -k k8s/`.
+Plain Kubernetes YAML in `k8s/`, assembled by `k8s/kustomization.yaml`, deployed by `scripts/deploy.sh` (`kubectl apply -k` on a generated overlay that adds the images, [ADR 0017](0017-deploy-script.md)).
 
 **File layout** (flat folder, no shared patches):
 
@@ -16,7 +16,7 @@ Plain Kubernetes YAML in `k8s/`, assembled by `k8s/kustomization.yaml`, deployed
 
 - **Fact:** Kustomize is built into `kubectl` since 1.14 (`kubectl apply -k <dir>`, preview with `kubectl kustomize <dir>`). ([Kubernetes docs: Kustomize](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/)) The evaluator needs no extra tool.
 - The manifests stay readable YAML with no template language, easy to explain line by line.
-- **Fact:** the `images` field rewrites image names and tags without editing the Deployments. ([Kustomize reference: images](https://kubectl.docs.kubernetes.io/references/kustomize/kustomization/images/)) The pipeline sets the git SHA there ([ADR 0005](0005-image-tags-git-sha.md)).
+- **Fact:** the `images` field rewrites image names and tags without editing the Deployments. ([Kustomize reference: images](https://kubectl.docs.kubernetes.io/references/kustomize/kustomization/images/)) `scripts/deploy.sh` sets the registry and the git SHA tag there, in a generated overlay ([ADR 0017](0017-deploy-script.md)).
 - **Fact:** `configMapGenerator` and `secretGenerator` add a content hash to the generated name, so a config change triggers a rollout. ([Kubernetes docs: Kustomize](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/))
 - **Explicit over DRY:** Poll and Result are almost the same file: 96 of Result's 99 YAML lines (comments aside) also appear in `poll.yaml`, with the app name changed. They differ only where the apps differ: grace period (45 s vs 30 s), the secret they read, and `/tmp`, uid and threads for Poll. If those lines were shared, `poll.yaml` would no longer show `maxUnavailable: 0`, the setting the zero-downtime test depends on. Drift between the copies is left to a CI check instead (#72, open).
 - **Policies by kind:** a PDB, an HPA or a NetworkPolicy is a separate concern from the workload (availability, scaling, network). One file per kind keeps each concern in one place, and each ticket adds one file.

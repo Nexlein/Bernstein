@@ -63,7 +63,7 @@ spec:
                     app.kubernetes.io/name: result
       containers:
         - name: result
-          # Registry and tag are set by the `images` field of kustomization.yaml.
+          # Registry and tag are set at deploy time by scripts/deploy.sh.
           image: result
           ports:
             - name: http

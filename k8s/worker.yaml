@@ -31,7 +31,7 @@ spec:
             value: '0'
       containers:
         - name: worker
-          # Registry and tag are set by the `images` field of kustomization.yaml.
+          # Registry and tag are set at deploy time by scripts/deploy.sh.
           image: worker
           ports:
             - name: http
