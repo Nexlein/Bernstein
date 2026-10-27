@@ -8,10 +8,10 @@ Set these variables once per shell; every command below uses them. The values ar
 
 ```bash
 RG=bernstein-rg             # resource group
-LOCATION=francecentral      # region of the resource group and the registry
+LOCATION=francecentral      # region of the resource group
 ACR=bernsteinacrmaeva       # registry name: globally unique, lowercase letters and digits only
 AKS=bernstein-aks           # cluster name
-AKS_LOCATION=spaincentral   # region of the cluster (see step 5)
+AKS_LOCATION=spaincentral   # region of the cluster (see step 5), and of the registry
 ```
 
 ---
@@ -79,8 +79,10 @@ az group create --name "$RG" --location "$LOCATION"
 The name must be globally unique, lowercase letters and digits only.
 
 ```bash
-az acr create --resource-group "$RG" --name "$ACR" --sku Basic
+az acr create --resource-group "$RG" --name "$ACR" --sku Basic --location "$AKS_LOCATION"
 ```
+
+Put the registry in the cluster's region: `az aks check-acr` warns that a registry in another region "may result in slow image pulls and extra cost". Ours predates this advice: it sits in `francecentral`, the cluster in `spaincentral`.
 
 ## 5. Create the AKS cluster (~5-10 min)
 

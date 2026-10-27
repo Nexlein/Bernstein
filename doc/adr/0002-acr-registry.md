@@ -14,6 +14,7 @@ Azure Container Registry `bernsteinacrmaeva.azurecr.io`, Basic SKU in `francecen
 
 ## Trade-offs
 
+- **Not in the cluster's region:** the registry is in `francecentral`, the cluster in `spaincentral` (moved there for the vCPU quota, [ADR 0001](0001-aks-cluster.md)). `az aks check-acr` warns that this "may result in slow image pulls and extra cost": pulls cross regions. Not worth recreating the registry for a demo; the setup guide now creates it in the cluster's region.
 - Basic is billed per day even when idle: small, but not zero. ([Azure: Container Registry pricing](https://azure.microsoft.com/pricing/details/container-registry/))
 - The person running `--attach-acr` needs the Owner role (or equivalent) on the subscription. ([Microsoft Learn: Integrate ACR with AKS](https://learn.microsoft.com/en-us/azure/aks/cluster-container-registry-integration))
 - **Fact:** no private endpoints or IP rules on Basic (Premium only). ([Microsoft Learn: ACR SKUs](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-skus)) The registry requires authentication but is reachable over the internet.
