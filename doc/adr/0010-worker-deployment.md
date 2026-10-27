@@ -4,7 +4,7 @@
 
 ## Decision
 
-`k8s/worker.yaml` runs the worker as a `Deployment` with 1 replica and no Service. Baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Both probes call `GET /readyz` on port 80. Runs as uid 10001 with `net.ipv4.ip_unprivileged_port_start=0`, a read-only root filesystem and all capabilities dropped. Image resolved through the `images` field of `kustomization.yaml`.
+`k8s/worker.yaml` runs the worker as a `Deployment` with 1 replica and no Service. Baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Both probes call `GET /readyz` on port 80. Runs as uid 10001 with `net.ipv4.ip_unprivileged_port_start=0`, a read-only root filesystem and all capabilities dropped. Image is the bare name `worker`; `scripts/deploy.sh` sets registry and tag ([ADR 0017](0017-deploy-script.md)).
 
 ## Why
 

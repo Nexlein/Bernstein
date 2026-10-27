@@ -4,7 +4,7 @@
 
 ## Decision
 
-`k8s/poll.yaml` is a `Deployment` with 2 replicas and the baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Liveness on `/healthz`, readiness on `/readyz`. Runs as uid 10001 with `net.ipv4.ip_unprivileged_port_start=0`, a read-only root filesystem, an in-memory `emptyDir` at `/tmp` with `HOME=/tmp`, and all capabilities dropped. Image is the bare name `poll`, resolved by `images` in `kustomization.yaml`. Gunicorn threads: [ADR 0015](0015-poll-gunicorn-threads.md).
+`k8s/poll.yaml` is a `Deployment` with 2 replicas and the baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Liveness on `/healthz`, readiness on `/readyz`. Runs as uid 10001 with `net.ipv4.ip_unprivileged_port_start=0`, a read-only root filesystem, an in-memory `emptyDir` at `/tmp` with `HOME=/tmp`, and all capabilities dropped. Image is the bare name `poll`; `scripts/deploy.sh` sets registry and tag ([ADR 0017](0017-deploy-script.md)). Gunicorn threads: [ADR 0015](0015-poll-gunicorn-threads.md).
 
 ## Why
 

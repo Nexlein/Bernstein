@@ -19,7 +19,7 @@ redis, postgres: see `docker-compose.yml` (internal only).
 - `.github/`: dependabot.yml, pull_request_template.md
 - `.github/workflows/`: ci.yml, mirror.yml
 - `.husky/`: pre-commit
-- `doc/adr/`: 0000-template.md, 0001-aks-cluster.md, 0002-acr-registry.md, 0003-kustomize.md, 0004-public-access-loadbalancer.md, 0005-image-tags-git-sha.md, 0006-secrets-secretgenerator.md, 0007-postgres-statefulset.md, 0008-result-deployment.md, 0009-redis-queue.md, 0010-worker-deployment.md, 0011-poll-deployment.md, 0012-graceful-shutdown.md, 0013-pod-anti-affinity.md, 0014-pod-disruption-budgets.md, 0015-poll-gunicorn-threads.md, 0016-zero-downtime-test.md, README.md
+- `doc/adr/`: 0000-template.md, 0001-aks-cluster.md, 0002-acr-registry.md, 0003-kustomize.md, 0004-public-access-loadbalancer.md, 0005-image-tags-git-sha.md, 0006-secrets-secretgenerator.md, 0007-postgres-statefulset.md, 0008-result-deployment.md, 0009-redis-queue.md, 0010-worker-deployment.md, 0011-poll-deployment.md, 0012-graceful-shutdown.md, 0013-pod-anti-affinity.md, 0014-pod-disruption-budgets.md, 0015-poll-gunicorn-threads.md, 0016-zero-downtime-test.md, 0017-deploy-script.md, README.md
 - `doc/defense/`: k8s-study-guide.md
 - `doc/setup/`: cluster-setup.md
 - `doc/subject/`: README.md, SUBJECT.md

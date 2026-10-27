@@ -4,7 +4,7 @@
 
 ## Decision
 
-`k8s/result.yaml` is a `Deployment` with 2 replicas and the baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Liveness on `/healthz`, readiness on `/readyz`. The container runs as uid 1000 with a read-only root filesystem and no Linux capabilities. Its image is the bare name `result`; the `images` field of `kustomization.yaml` sets registry and tag. No HPA.
+`k8s/result.yaml` is a `Deployment` with 2 replicas and the baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`). Liveness on `/healthz`, readiness on `/readyz`. The container runs as uid 1000 with a read-only root filesystem and no Linux capabilities. Its image is the bare name `result`; `scripts/deploy.sh` sets registry and tag ([ADR 0017](0017-deploy-script.md)). No HPA.
 
 ## Why
 
@@ -14,7 +14,7 @@
 - **No HPA, on purpose:** each pod runs one `SELECT ... GROUP BY` per second and broadcasts it to its WebSocket clients, so load barely grows with viewers. WebSocket connections stay on the pod they opened on, so a pod added by an HPA would only get new visitors. Poll gets the HPA instead (#33).
 - **Port 80 as non-root:** **Fact:** `net.ipv4.ip_unprivileged_port_start` is a "safe" sysctl, allowed by default since Kubernetes 1.22; setting it to `0` lets any user bind ports below 1024 in the pod's network namespace. ([Kubernetes docs: sysctls](https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/#safe-and-unsafe-sysctls)) Some runtimes already do this; declaring it makes the pod behave the same on any cluster.
 - **Hardening:** no privilege escalation, all capabilities dropped, read-only root filesystem. Result writes nothing to disk, so a compromised process cannot drop files in the container.
-- **Image through `images`:** CI only rewrites `newTag` (the git SHA, [ADR 0005](0005-image-tags-git-sha.md)). An evaluator with their own registry only changes `newName`.
+- **Image set at deploy time:** the evaluator passes their registry to `scripts/deploy.sh`, which also sets the git SHA tag ([ADR 0005](0005-image-tags-git-sha.md), [ADR 0017](0017-deploy-script.md)). No manifest edit.
 
 ## Trade-offs
 
