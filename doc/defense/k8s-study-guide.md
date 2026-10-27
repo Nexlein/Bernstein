@@ -2,6 +2,8 @@
 
 Support de révision : ce que le déploiement (`scripts/deploy.sh`, qui applique `k8s/`) crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans les [ADR](../adr/README.md) (un fichier par choix) ; ce guide explique le **comment**.
 
+Pour répondre vite en soutenance (drain, pod tué, limites, autoscaling, sauvegarde) : l'[antisèche](cheatsheet.md), avec les commandes à montrer en direct.
+
 Méthode conseillée : lire une partie, puis fermer le guide et réexpliquer le fichier à voix haute, ligne par ligne. Chaque partie se termine par des questions probables en soutenance.
 
 Avancement :

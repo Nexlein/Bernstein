@@ -92,7 +92,7 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 ├── .claude/              # Agent settings and the generated code map
 ├── .github/              # CI, Epitech mirror, Dependabot, PR template
 ├── .husky/               # Pre-commit hook (regenerates the code map)
-├── doc/                  # ADRs, cluster setup guide, defense study guide, subject
+├── doc/                  # ADRs, cluster setup guide, defense study guide and cheatsheet, subject
 ├── k8s/                  # Kustomize manifests (deployed by scripts/deploy.sh)
 ├── poll-application/     # Provided source code and Dockerfiles: Poll, Result, Worker
 ├── scripts/              # Deploy script, code map generator
