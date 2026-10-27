@@ -35,6 +35,7 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 | [0021](0021-no-infrastructure-as-code.md)    | Infrastructure     | No Terraform or Bicep: `az` commands in the setup guide                             | Why no Infrastructure as Code? How would you recreate the cluster?                        |
 | [0022](0022-no-https.md)                     | HTTPS              | Plain HTTP on port 80, no domain name                                               | Why no HTTPS? What would it take?                                                         |
 | [0023](0023-security-posture.md)             | Security           | Hardened containers, private data stores; cluster defaults kept and listed          | What is exposed? Who can reach the API server? How are Secrets stored?                    |
+| [0024](0024-observability.md)                | Observability      | `kubectl` (probes, events, logs, `top`), no centralized monitoring or alerting      | How do you know it is broken? How do you debug a pod? Why no Prometheus?                  |
 
 ## By file
 
@@ -60,5 +61,6 @@ What breaks, and where we explain why we accept it:
 - **Redis has 1 replica, in memory.** A Redis restart (about 4 s) makes Poll unready; votes still queued in Redis are lost if it crashes. [0009](0009-redis-queue.md) When full (100 MB), it refuses new votes instead of crashing. [0018](0018-resource-requests-and-limits.md)
 - **Cluster security defaults.** Public API server without IP ranges, local accounts on, no NetworkPolicy, no Pod Security Standards enforced. [0023](0023-security-posture.md)
 - **HTTP only.** Votes and the voter cookie travel in clear. [0022](0022-no-https.md)
+- **No alerting, no log history.** Nobody is told when the app breaks; logs go with the pod, and only the last crashed run is kept. [0024](0024-observability.md)
 - **The worker has no `SIGTERM` hook.** A vote popped in the sub-millisecond window before its upsert is lost if the pod stops then. [0010](0010-worker-deployment.md)
 - **Free tier and B-series nodes.** No API server SLA, and a long load test can use up the CPU credits. [0001](0001-aks-cluster.md)
