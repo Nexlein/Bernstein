@@ -88,16 +88,18 @@ Put the registry in the cluster's region: `az aks check-acr` warns that a regist
 
 ```bash
 az aks create --resource-group "$RG" --name "$AKS" --location "$AKS_LOCATION" --node-count 2 --node-vm-size standard_b2s_v2 \
+  --network-plugin azure --network-plugin-mode overlay --network-dataplane cilium \
   --attach-acr "$ACR" --no-ssh-key
 ```
 
-| Option                    | Why                                                                                                                    |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `--location spaincentral` | `francecentral` only allows `v7` SKUs on Azure for Students, which have `0` vCPU quota; `spaincentral` allows `Bsv2`   |
-| `--node-count 2`          | Spreads the 2 poll/result replicas across nodes; fits within the 6 regional / 10 family vCPU quota (`2 × 2 = 4` vCPUs) |
-| `--node-vm-size b2s_v2`   | 2 vCPU / 8 GB RAM (`Standard Bsv2 Family` has 10 vCPU quota in `spaincentral` on the student subscription)             |
-| `--attach-acr`            | Grants the cluster pull access to the ACR (no `imagePullSecret` needed)                                                |
-| `--no-ssh-key`            | No SSH needed on nodes; avoids the `~/.ssh/id_rsa` parsing error                                                       |
+| Option                                                        | Why                                                                                                                                                                    |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--location spaincentral`                                     | `francecentral` only allows `v7` SKUs on Azure for Students, which have `0` vCPU quota; `spaincentral` allows `Bsv2`                                                   |
+| `--node-count 2`                                              | Spreads the 2 poll/result replicas across nodes; fits within the 6 regional / 10 family vCPU quota (`2 × 2 = 4` vCPUs)                                                 |
+| `--node-vm-size b2s_v2`                                       | 2 vCPU / 8 GB RAM (`Standard Bsv2 Family` has 10 vCPU quota in `spaincentral` on the student subscription)                                                             |
+| `--network-plugin-mode overlay`, `--network-dataplane cilium` | Azure CNI Overlay with Cilium, which enforces the NetworkPolicies ([ADR 0025](../adr/0025-network-policies.md)). Ours was created without Cilium, then updated (below) |
+| `--attach-acr`                                                | Grants the cluster pull access to the ACR (no `imagePullSecret` needed)                                                                                                |
+| `--no-ssh-key`                                                | No SSH needed on nodes; avoids the `~/.ssh/id_rsa` parsing error                                                                                                       |
 
 Track progress:
 
@@ -115,6 +117,16 @@ az aks update --resource-group "$RG" --name "$AKS" --attach-acr "$ACR"
 ```
 
 Attaching needs the Owner role (or equivalent) on the subscription, because it creates a role assignment ([ADR 0002](../adr/0002-acr-registry.md)).
+
+### Already have a cluster? Enable the network policy engine
+
+`az aks show -g "$RG" -n "$AKS" --query networkProfile.networkPolicy -o tsv` prints `none`: the NetworkPolicies of `k8s/` would be ignored. Switch an Azure CNI cluster to Cilium:
+
+```bash
+az aks update --resource-group "$RG" --name "$AKS" --network-dataplane cilium --network-policy cilium
+```
+
+Both options are needed: with `--network-dataplane cilium` alone, AKS answers `Cilium dataplane requires network policy cilium`. The nodes are reimaged one at a time, like an upgrade, and the policies are enforced once all of them are done. Microsoft documents no way back to the previous dataplane ([ADR 0025](../adr/0025-network-policies.md)). Measured on ours: about 12 minutes, Result down twice for about 40 s and Poll once, while Redis and PostgreSQL moved.
 
 ## 6. Connect kubectl to the cluster
 

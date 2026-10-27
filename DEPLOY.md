@@ -43,6 +43,13 @@ Install steps: [setup guide, prerequisites](doc/setup/cluster-setup.md#0-prerequ
   - you have a cluster but no registry: [create the registry](doc/setup/cluster-setup.md#4-create-the-private-registry-acr), then [attach it to your cluster](doc/setup/cluster-setup.md#already-have-a-cluster-attach-the-registry);
   - you have neither: follow the [setup guide](doc/setup/cluster-setup.md) from step 1.
 - Attaching needs the **Owner** role (or equivalent) on the subscription, because it creates a role assignment ([ADR 0002](doc/adr/0002-acr-registry.md)).
+- A **network policy engine** on the cluster, so that `k8s/network-policies.yaml` is enforced. Without one, the policies are accepted and ignored: the app works, but any pod can reach Redis and PostgreSQL ([ADR 0025](doc/adr/0025-network-policies.md)). Check it, this must not print `none`:
+
+  ```bash
+  az aks show -g <resource-group> -n <cluster> --query networkProfile.networkPolicy -o tsv
+  ```
+
+  `none`: [enable Cilium](doc/setup/cluster-setup.md#already-have-a-cluster-enable-the-network-policy-engine) (the nodes are reimaged).
 
 ## 2. Credentials
 
@@ -190,6 +197,7 @@ az group delete --name <resource-group> --yes   # every resource in the group: c
 | `scripts/deploy.sh` stops with `ERROR: ...`                                                                                                         | a prerequisite is missing                                                             | the message names it and the command to fix it                                                                                         |
 | `tests/zero-downtime.sh` shows timeouts on Poll **and** Result at the same seconds                                                                  | the test machine's own connection is busy (a big push, a system update downloading)   | rerun from an idle connection or another machine. A real rollout problem only hits the app being updated                               |
 | Votes fail with HTTP 500, `kubectl -n bernstein logs deploy/poll` shows `OutOfMemoryError`                                                          | the Redis queue is full (100 MB): the worker or PostgreSQL has been down for a while  | bring the worker and PostgreSQL back: the queue drains and votes work again ([ADR 0018](doc/adr/0018-resource-requests-and-limits.md)) |
+| A pod you added cannot reach Redis, PostgreSQL or the internet (timeouts)                                                                           | `k8s/network-policies.yaml` denies every flow it does not list                        | add an allow rule for the new flow ([ADR 0025](doc/adr/0025-network-policies.md))                                                      |
 
 ### Debug a broken pod
 
