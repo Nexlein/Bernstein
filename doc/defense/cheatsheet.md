@@ -125,3 +125,15 @@ kubectl -n bernstein exec deploy/poll -- python -c "import socket; socket.create
 ```
 
 Détails : [ADR 0025](../adr/0025-network-policies.md), [guide 8 ter](k8s-study-guide.md#8-ter-k8snetwork-policiesyaml-ligne-par-ligne).
+
+## 10. « Comment empêchez-vous un pod de tourner en root ? »
+
+Le namespace impose le niveau `restricted` des Pod Security Standards (label `pod-security.kubernetes.io/enforce: restricted`) : l'API server refuse tout pod root, avec élévation de privilèges, avec des capabilities en plus (sauf `NET_BIND_SERVICE`) ou sans profil seccomp. Nos 5 pods respectent ces règles. Ils n'ont en plus ni jeton d'API ni système de fichiers inscriptible. Mesuré : un pod `runAsUser: 0` est refusé, avec la liste des règles violées.
+
+```bash
+kubectl -n bernstein run root-test --image=busybox:1.37 --restart=Never -- sleep 5
+# Error from server (Forbidden): pods "root-test" is forbidden: violates PodSecurity "restricted:latest": ...
+kubectl -n bernstein debug <pod> -it --image=busybox:1.37 --profile=restricted   # le debug passe, avec ce profil
+```
+
+Détails : [ADR 0027](../adr/0027-pod-security-standards.md), [guide partie 3](k8s-study-guide.md#3-k8snamespaceyaml-ligne-par-ligne).

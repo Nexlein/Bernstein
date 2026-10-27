@@ -2,7 +2,7 @@
 
 Support de révision : ce que le déploiement (`scripts/deploy.sh`, qui applique `k8s/`) crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans les [ADR](../adr/README.md) (un fichier par choix) ; ce guide explique le **comment**.
 
-Pour répondre vite en soutenance (drain, pod tué, limites, autoscaling, sauvegarde, réseau) : l'[antisèche](cheatsheet.md), avec les commandes à montrer en direct.
+Pour répondre vite en soutenance (drain, pod tué, limites, autoscaling, sauvegarde, réseau, sécurité des pods) : l'[antisèche](cheatsheet.md), avec les commandes à montrer en direct.
 
 Méthode conseillée : lire une partie, puis fermer le guide et réexpliquer le fichier à voix haute, ligne par ligne. Chaque partie se termine par des questions probables en soutenance.
 
@@ -245,17 +245,26 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: bernstein
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
 ```
 
 - `apiVersion: v1` : le groupe d'API « core » de Kubernetes, celui des objets de base (Pod, Service, ConfigMap, Secret, Namespace).
 - `kind: Namespace` : le type d'objet.
 - `metadata.name: bernstein` : son nom. Il n'a pas de `namespace` lui-même, puisque c'est un objet de niveau cluster.
+- Les 3 labels `pod-security.kubernetes.io/*` : le **Pod Security Admission**, intégré à l'API server. Le niveau `restricted` impose à chaque pod : pas de root, pas d'élévation de privilèges, toutes les capabilities retirées, un profil seccomp, et seulement certains types de volumes ([ADR 0027](../adr/0027-pod-security-standards.md)).
+  - `enforce` : un pod qui viole la règle est **refusé**.
+  - `warn` : `kubectl apply` affiche un avertissement, y compris pour un Deployment dont le modèle de pod viole la règle (le Deployment est accepté, ses pods seront refusés).
+  - `audit` : la violation est notée dans le journal d'audit de l'API.
 
 Le namespace sépare notre application des composants système (`kube-system`…) et permet de tout supprimer d'un coup. Attention : supprimer le namespace supprime **aussi la PVC, donc le disque et les votes** (la classe de stockage `default` d'AKS a `reclaimPolicy: Delete`).
 
 ### Questions probables
 
-- _« À quoi sert le namespace ? »_ Isoler et regrouper : `kubectl get pods -n bernstein` ne montre que nos pods. Les NetworkPolicies (#34) et les quotas s'appliquent aussi par namespace.
+- _« À quoi sert le namespace ? »_ Isoler et regrouper : `kubectl get pods -n bernstein` ne montre que nos pods. Les NetworkPolicies (partie 8 ter), le niveau de sécurité des pods et les quotas s'appliquent aussi par namespace.
+- _« Comment empêchez-vous un pod root ? »_ Le label `enforce: restricted`. Mesuré : `kubectl -n bernstein run` d'un pod `runAsUser: 0` répond `pods "root-test" is forbidden: violates PodSecurity "restricted:latest"`, avec la liste des règles violées.
 - _« `kubectl delete -k k8s/` garde-t-il les votes ? »_ Non : il supprime le namespace, donc la PVC et le disque. Supprimer seulement le pod ou le StatefulSet, en revanche, garde les données.
 
 ---
@@ -344,7 +353,10 @@ Ce trio `selector` / `template.labels` / `Service.selector` revient dans **tous*
 
 ```yaml
 spec:
+  automountServiceAccountToken: false
   securityContext:
+    seccompProfile:
+      type: RuntimeDefault
     runAsUser: 70
     runAsGroup: 70
     runAsNonRoot: true
@@ -352,6 +364,11 @@ spec:
 ```
 
 Le `securityContext` au niveau **pod** s'applique à tous ses conteneurs.
+
+- `automountServiceAccountToken: false` : par défaut, Kubernetes monte dans chaque conteneur un jeton pour appeler son API (`/var/run/secrets/kubernetes.io/serviceaccount`). Aucune de nos apps n'appelle l'API : sans jeton, un attaquant dans le conteneur n'a rien à essayer.
+- `seccompProfile: RuntimeDefault` : le filtre d'appels système par défaut du runtime (containerd) bloque les appels dangereux et rarement utiles. Exigé par le niveau `restricted` (partie 3). Vérifié : `Seccomp: 2` (filtre actif) dans `/proc/1/status`.
+
+Ces deux réglages sont les mêmes dans les 5 fichiers (`postgres`, `redis`, `worker`, `poll`, `result`) : les parties suivantes ne les répètent pas.
 
 - `runAsUser: 70` / `runAsGroup: 70` : les processus tournent avec l'uid et le gid 70, ceux de l'utilisateur `postgres` dans l'image Alpine (vérifié avec `id postgres` dans l'image).
 - `runAsNonRoot: true` : Kubernetes **refuse** de démarrer le conteneur s'il tournerait en root (uid 0). C'est un garde-fou.
@@ -449,6 +466,7 @@ resources:
 ```yaml
 securityContext:
   allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
   capabilities:
     drop: ['ALL']
 ```
@@ -456,7 +474,7 @@ securityContext:
 - `allowPrivilegeEscalation: false` : un processus ne peut pas gagner plus de droits que son parent (par exemple via un binaire `setuid`).
 - `capabilities.drop: ['ALL']` : retire tous les « super-pouvoirs » Linux (changer de propriétaire d'un fichier, ouvrir un port bas…). Comme Postgres tourne directement en uid 70, il n'en a besoin d'aucun. Vérifié sur AKS : `CapEff: 0000000000000000`. _(Ajouté par la PR #61.)_
 
-Pas de `readOnlyRootFilesystem` ici : Postgres écrit dans `/var/run/postgresql` (socket) et dans des fichiers temporaires.
+- `readOnlyRootFilesystem: true` : le système de fichiers de l'image est en lecture seule. Postgres écrit ses données sur le disque (PVC), son socket et son fichier de verrou dans `/var/run/postgresql`, et des fichiers temporaires dans `/tmp` : ces deux dossiers sont des `emptyDir` (ci-dessous).
 
 ### Les volumes
 
@@ -467,21 +485,33 @@ volumeMounts:
   - name: init
     mountPath: /docker-entrypoint-initdb.d
     readOnly: true
+  - name: run
+    mountPath: /var/run/postgresql
+  - name: tmp
+    mountPath: /tmp
 ```
 
 `volumeMounts` dit **où** monter chaque volume dans le conteneur :
 
 - `data` sur `/var/lib/postgresql` : le disque persistant. L'image range ses fichiers dans le sous-dossier `18/docker`.
 - `init` sur `/docker-entrypoint-initdb.d` : le ConfigMap `postgres-init` apparaît comme un dossier, qui contient `schema.sql`. `readOnly` : Postgres peut le lire, pas le modifier.
+- `run` et `tmp` : les deux seuls dossiers où Postgres écrit hors du disque, puisque le reste est en lecture seule.
 
 ```yaml
 volumes:
   - name: init
     configMap:
       name: postgres-init
+  - name: run
+    emptyDir:
+      medium: Memory
+      sizeLimit: 1Mi
+  - name: tmp
+    emptyDir:
+      sizeLimit: 64Mi
 ```
 
-`volumes` dit **ce que sont** les volumes du pod. Ici, `init` est un ConfigMap (Kustomize ajoute le hash au nom). `data` n'est pas déclaré ici : il vient du `volumeClaimTemplates` juste en dessous.
+`volumes` dit **ce que sont** les volumes du pod. Ici, `init` est un ConfigMap (Kustomize ajoute le hash au nom). `run` est en mémoire (tmpfs) : un socket et un fichier de verrou de quelques octets. `tmp` est sur le disque du nœud, limité à 64 Mi. Les deux sont vides à chaque démarrage du pod. `data` n'est pas déclaré ici : il vient du `volumeClaimTemplates` juste en dessous.
 
 ### Le modèle de disque
 
@@ -580,7 +610,7 @@ securityContext:
   fsGroup: 1000
 ```
 
-L'uid 999 et le gid 1000 sont ceux de l'utilisateur `redis` dans l'image Alpine (vérifié avec `id redis`). Plus bas, le conteneur a `allowPrivilegeEscalation: false` et `capabilities.drop: ['ALL']`.
+L'uid 999 et le gid 1000 sont ceux de l'utilisateur `redis` dans l'image Alpine (vérifié avec `id redis`). Plus bas, le conteneur a `allowPrivilegeEscalation: false`, `capabilities.drop: ['ALL']` et `readOnlyRootFilesystem: true` : Redis n'écrit rien sur disque (`--save ''`, `--appendonly no`, ci-dessous), donc aucun `emptyDir` n'est nécessaire.
 
 ### La commande de démarrage
 
@@ -953,7 +983,7 @@ Résultat : tout le système de fichiers est en lecture seule, **sauf** `/tmp`, 
 
 ## 8. `k8s/result.yaml`, ligne par ligne
 
-Même structure que Poll : **2 replicas**, la même stratégie, la sysctl pour le port 80 et le système de fichiers en lecture seule. Différences :
+Même structure que Poll, mais **2 replicas fixes** (pas de HPA), la même stratégie, la sysctl pour le port 80 et le système de fichiers en lecture seule. Différences :
 
 ### Le Service public (LoadBalancer)
 
@@ -1412,20 +1442,21 @@ Supprime le namespace, donc **tout**, y compris la PVC. La classe de stockage `d
 
 ### 9.10 Commandes utiles pendant la soutenance
 
-| Besoin                                      | Commande                                                                      |
-| ------------------------------------------- | ----------------------------------------------------------------------------- |
-| Voir tous nos objets                        | `kubectl -n bernstein get all`                                                |
-| Les IP publiques de Poll et Result          | `kubectl -n bernstein get svc poll result`                                    |
-| Voir sur quel nœud tourne chaque pod        | `kubectl -n bernstein get pods -o wide`                                       |
-| Pourquoi un pod ne démarre pas              | `kubectl -n bernstein describe pod <pod>` (section `Events`)                  |
-| Logs d'un pod (et du précédent)             | `kubectl -n bernstein logs <pod>` / `--previous`                              |
-| Suivre un rollout                           | `kubectl -n bernstein rollout status deploy/poll`                             |
-| Historique et retour arrière                | `kubectl -n bernstein rollout history deploy/poll` / `rollout undo …`         |
-| Relancer les pods sans changer l'image      | `kubectl -n bernstein rollout restart deploy/poll`                            |
-| Vers quels pods pointe un Service           | `kubectl -n bernstein get endpointslices -l kubernetes.io/service-name=redis` |
-| Voir le rendu sans rien appliquer           | `kubectl kustomize k8s/`                                                      |
-| Comparer avec ce qui tourne                 | `kubectl diff -k .deploy`                                                     |
-| Consommation CPU et mémoire                 | `kubectl -n bernstein top pods`                                               |
-| Tester un pod sans passer par l'IP publique | `kubectl -n bernstein port-forward deploy/poll 8080:80`                       |
+| Besoin                                      | Commande                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| Voir tous nos objets                        | `kubectl -n bernstein get all`                                                   |
+| Les IP publiques de Poll et Result          | `kubectl -n bernstein get svc poll result`                                       |
+| Voir sur quel nœud tourne chaque pod        | `kubectl -n bernstein get pods -o wide`                                          |
+| Pourquoi un pod ne démarre pas              | `kubectl -n bernstein describe pod <pod>` (section `Events`)                     |
+| Logs d'un pod (et du précédent)             | `kubectl -n bernstein logs <pod>` / `--previous`                                 |
+| Suivre un rollout                           | `kubectl -n bernstein rollout status deploy/poll`                                |
+| Historique et retour arrière                | `kubectl -n bernstein rollout history deploy/poll` / `rollout undo …`            |
+| Relancer les pods sans changer l'image      | `kubectl -n bernstein rollout restart deploy/poll`                               |
+| Vers quels pods pointe un Service           | `kubectl -n bernstein get endpointslices -l kubernetes.io/service-name=redis`    |
+| Voir le rendu sans rien appliquer           | `kubectl kustomize k8s/`                                                         |
+| Comparer avec ce qui tourne                 | `kubectl diff -k .deploy`                                                        |
+| Consommation CPU et mémoire                 | `kubectl -n bernstein top pods`                                                  |
+| Tester un pod sans passer par l'IP publique | `kubectl -n bernstein port-forward deploy/poll 8080:80`                          |
+| Ajouter des outils dans un pod (debug)      | `kubectl -n bernstein debug <pod> -it --image=busybox:1.37 --profile=restricted` |
 
 `.deploy/` est l'overlay écrit par le dernier `scripts/deploy.sh`, avec les images de notre registry. `kubectl diff -k k8s/` afficherait une fausse différence sur chaque image : la base ne nomme aucun registry (vérifié sur AKS).
