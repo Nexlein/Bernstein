@@ -124,11 +124,15 @@ kubectl get nodes -w       # live watch (Ctrl+C to quit)
 
 `get-credentials` writes the config to `~/.kube/config`.
 
-Check that the cluster can pull from the registry (runs a test pod on a node):
+Check that the cluster may pull from the registry: its kubelet identity must hold the `AcrPull` role on it.
 
 ```bash
-az aks check-acr --resource-group "$RG" --name "$AKS" --acr "$ACR.azurecr.io"
+KUBELET_ID=$(az aks show -g "$RG" -n "$AKS" --query identityProfile.kubeletidentity.objectId -o tsv)
+az role assignment list --assignee "$KUBELET_ID" --scope "$(az acr show -n "$ACR" --query id -o tsv)" \
+  --query "[].roleDefinitionName" -o tsv   # AcrPull
 ```
+
+`az aks check-acr` runs more checks, but with az 2.91 it crashed on our cluster (`KeyError: 'serverVersion'`).
 
 ---
 

@@ -38,7 +38,7 @@ The subject keeps the cloud credentials and `POSTGRES_PASSWORD` out of the deliv
 | Azure account                         | your `az` session                          | `az login`, then `az account set --subscription <name>` if you have several                                                         |
 | Cluster access                        | `~/.kube/config`                           | `az aks get-credentials -g <resource-group> -n <cluster>`                                                                           |
 | Push to the registry                  | short-lived Docker token                   | `scripts/deploy.sh` runs `az acr login`. Your account needs `AcrPush` on the registry, or Contributor / Owner on its resource group |
-| Pull from the registry                | the cluster's kubelet identity (`AcrPull`) | `--attach-acr`. Check it: `az aks check-acr -g <resource-group> -n <cluster> --acr <name>.azurecr.io`                               |
+| Pull from the registry | the cluster's kubelet identity (`AcrPull`) | `--attach-acr`. Check it: [setup guide, step 6](doc/setup/cluster-setup.md#6-connect-kubectl-to-the-cluster) |
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | `k8s/secrets.env` (gitignored)             | [see below](#app-secrets-k8ssecretsenv)                                                                                             |
 
 There is no `imagePullSecret` and no registry password anywhere: the cluster pulls through its attached identity ([ADR 0002](doc/adr/0002-acr-registry.md)).
