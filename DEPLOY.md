@@ -10,6 +10,7 @@ How to deploy the voting app on your own AKS cluster and private registry, from 
 5. [Roll back](#5-roll-back).
 6. [Stop or delete](#6-stop-or-delete-cost): cost.
 7. [Troubleshooting](#7-troubleshooting).
+8. [Back up and restore the votes](#8-back-up-and-restore-the-votes).
 
 ## 0. Get the code
 
@@ -180,11 +181,28 @@ az group delete --name <resource-group> --yes   # every resource in the group: c
 
 ## 7. Troubleshooting
 
-| Symptom                                                                                                                                             | Likely cause                                                                          | Fix                                                                                                                        |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `ImagePullBackOff` on poll, worker or result                                                                                                        | the cluster cannot pull from the registry, or `kubectl apply -k k8s/` was run by hand | [check the pull permission](#check-the-pull-permission); deploy with `scripts/deploy.sh`                                   |
-| `EXTERNAL-IP` stays `<pending>`                                                                                                                     | Azure is still creating the public IP                                                 | wait 1 to 2 minutes (the script waits up to 5)                                                                             |
-| worker restarts, Result not ready; `kubectl -n bernstein logs deploy/worker` says `password authentication failed` or `password is an empty string` | `POSTGRES_PASSWORD` is empty, or differs from the one the database was created with   | put that password back in `k8s/secrets.env` and redeploy ([app secrets](#app-secrets-k8ssecretsenv))                       |
-| `kubectl` cannot reach the cluster after a restart (`i/o timeout`)                                                                                  | right after `az aks start` the API server can need a minute, or its IP changed        | wait a minute and retry; if it still fails: `az aks get-credentials -g <resource-group> -n <cluster> --overwrite-existing` |
-| `scripts/deploy.sh` stops with `ERROR: ...`                                                                                                         | a prerequisite is missing                                                             | the message names it and the command to fix it                                                                             |
-| `tests/zero-downtime.sh` shows timeouts on Poll **and** Result at the same seconds                                                                  | the test machine's own connection is busy (a big push, a system update downloading)   | rerun from an idle connection or another machine. A real rollout problem only hits the app being updated                   |
+| Symptom                                                                                                                                             | Likely cause                                                                          | Fix                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ImagePullBackOff` on poll, worker or result                                                                                                        | the cluster cannot pull from the registry, or `kubectl apply -k k8s/` was run by hand | [check the pull permission](#check-the-pull-permission); deploy with `scripts/deploy.sh`                                               |
+| `EXTERNAL-IP` stays `<pending>`                                                                                                                     | Azure is still creating the public IP                                                 | wait 1 to 2 minutes (the script waits up to 5)                                                                                         |
+| worker restarts, Result not ready; `kubectl -n bernstein logs deploy/worker` says `password authentication failed` or `password is an empty string` | `POSTGRES_PASSWORD` is empty, or differs from the one the database was created with   | put that password back in `k8s/secrets.env` and redeploy ([app secrets](#app-secrets-k8ssecretsenv))                                   |
+| `kubectl` cannot reach the cluster after a restart (`i/o timeout`)                                                                                  | right after `az aks start` the API server can need a minute, or its IP changed        | wait a minute and retry; if it still fails: `az aks get-credentials -g <resource-group> -n <cluster> --overwrite-existing`             |
+| `scripts/deploy.sh` stops with `ERROR: ...`                                                                                                         | a prerequisite is missing                                                             | the message names it and the command to fix it                                                                                         |
+| `tests/zero-downtime.sh` shows timeouts on Poll **and** Result at the same seconds                                                                  | the test machine's own connection is busy (a big push, a system update downloading)   | rerun from an idle connection or another machine. A real rollout problem only hits the app being updated                               |
+| Votes fail with HTTP 500, `kubectl -n bernstein logs deploy/poll` shows `OutOfMemoryError`                                                          | the Redis queue is full (100 MB): the worker or PostgreSQL has been down for a while  | bring the worker and PostgreSQL back: the queue drains and votes work again ([ADR 0018](doc/adr/0018-resource-requests-and-limits.md)) |
+
+## 8. Back up and restore the votes
+
+There is no automatic backup ([ADR 0019](doc/adr/0019-postgres-backup.md)). Dump the database to your machine, outside the repository:
+
+```bash
+kubectl -n bernstein exec postgres-0 -- pg_dump -U postgres -d postgres --clean --if-exists > ~/votes-backup.sql
+```
+
+Restore it. This replaces the `votes` table with the content of the dump:
+
+```bash
+kubectl -n bernstein exec -i postgres-0 -- psql -q -U postgres -d postgres < ~/votes-backup.sql
+```
+
+Tested on AKS: a dump of 6195 votes, restored into a scratch database, gave the same rows and the same checksum.
