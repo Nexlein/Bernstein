@@ -1,0 +1,23 @@
+# Poll runs 2 to 6 pods, to keep their average CPU near 70 % of the request (35m of 50m).
+# Default behaviour: scale up at once, scale down after 5 minutes of lower load.
+# Result has no HPA (ADR 0008).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: poll
+  labels:
+    app.kubernetes.io/name: poll
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: poll
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

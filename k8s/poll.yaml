@@ -22,7 +22,7 @@ metadata:
   labels:
     app.kubernetes.io/name: poll
 spec:
-  replicas: 2
+  # No `replicas`: the HPA in hpa.yaml sets it (2 to 6). A value here would reset it on every apply.
   # Zero-downtime rollout: start one new pod, wait until it is Ready for 5 s, then stop an old one.
   strategy:
     type: RollingUpdate
