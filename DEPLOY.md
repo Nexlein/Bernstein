@@ -1,7 +1,8 @@
 # Deploy Bernstein
 
-How to deploy the voting app on your own AKS cluster and private registry, from a fresh clone. Why each choice was made: [`doc/adr/`](doc/adr/README.md).
+How to deploy the voting app on your own AKS cluster and private registry, from a fresh clone. Why each choice was made: [`doc/adr/`](doc/adr/README.md). Last followed end to end from a fresh clone: 2026-10-27 (#39).
 
+0. [Get the code](#0-get-the-code).
 1. [Prerequisites](#1-prerequisites): tools, and an AKS cluster attached to a private ACR registry.
 2. [Credentials](#2-credentials): where each credential lives. None of them goes into git.
 3. [Deploy](#3-deploy): `REGISTRY=<name>.azurecr.io scripts/deploy.sh`, then check it works.
@@ -10,18 +11,27 @@ How to deploy the voting app on your own AKS cluster and private registry, from 
 6. [Stop or delete](#6-stop-or-delete-cost): cost.
 7. [Troubleshooting](#7-troubleshooting).
 
+## 0. Get the code
+
+```bash
+git clone <repository-url> bernstein
+cd bernstein
+```
+
+Run every command of this guide from this folder, the repository root. With Docker Desktop on Linux, clone inside your home folder: by default Docker cannot read other folders such as `/tmp`, and the build fails with `unable to prepare context: path ... not found`.
+
 ## 1. Prerequisites
 
 ### Tools
 
 Run the commands from Linux, macOS, or WSL2 on Windows: `scripts/deploy.sh` is a bash script.
 
-| Tool             | Used for                                         | Tested with         |
-| ---------------- | ------------------------------------------------ | ------------------- |
-| `git`            | clone, image tag (commit SHA)                    | 2.53                |
-| Docker           | build and push the images                        | 29.8                |
-| `kubectl`        | deploy to the cluster                            | 1.37 (cluster 1.36) |
-| Azure CLI (`az`) | log in to Azure, to the cluster, to the registry | 2.91                |
+| Tool             | Used for                                                      | Tested with         |
+| ---------------- | ------------------------------------------------------------- | ------------------- |
+| `git`            | clone, image tag (commit SHA)                                 | 2.53                |
+| Docker           | build and push the images (the Docker daemon must be running) | 29.8                |
+| `kubectl`        | deploy to the cluster                                         | 1.37 (cluster 1.36) |
+| Azure CLI (`az`) | log in to Azure, to the cluster, to the registry              | 2.91                |
 
 Install steps: [setup guide, prerequisites](doc/setup/cluster-setup.md#0-prerequisites).
 
@@ -42,10 +52,22 @@ The subject keeps the cloud credentials and `POSTGRES_PASSWORD` out of the deliv
 | Azure account                         | your `az` session                          | `az login`, then `az account set --subscription <name>` if you have several                                                         |
 | Cluster access                        | `~/.kube/config`                           | `az aks get-credentials -g <resource-group> -n <cluster>`                                                                           |
 | Push to the registry                  | short-lived Docker token                   | `scripts/deploy.sh` runs `az acr login`. Your account needs `AcrPush` on the registry, or Contributor / Owner on its resource group |
-| Pull from the registry                | the cluster's kubelet identity (`AcrPull`) | `--attach-acr`. Check it: [setup guide, step 6](doc/setup/cluster-setup.md#6-connect-kubectl-to-the-cluster)                        |
+| Pull from the registry                | the cluster's kubelet identity (`AcrPull`) | `--attach-acr`. [Check it](#check-the-pull-permission)                                                                              |
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | `k8s/secrets.env` (gitignored)             | [see below](#app-secrets-k8ssecretsenv)                                                                                             |
 
 There is no `imagePullSecret` and no registry password anywhere: the cluster pulls through its attached identity ([ADR 0002](doc/adr/0002-acr-registry.md)).
+
+### Check the pull permission
+
+The cluster's kubelet identity must hold `AcrPull` on the registry. This prints `AcrPull`:
+
+```bash
+KUBELET_ID=$(az aks show -g <resource-group> -n <cluster> --query identityProfile.kubeletidentity.objectId -o tsv)
+az role assignment list --assignee "$KUBELET_ID" --scope "$(az acr show -n <name> --query id -o tsv)" \
+  --query "[].roleDefinitionName" -o tsv
+```
+
+Nothing printed: [attach the registry](doc/setup/cluster-setup.md#already-have-a-cluster-attach-the-registry).
 
 ### App secrets: `k8s/secrets.env`
 
@@ -148,7 +170,7 @@ Delete the app only, and keep the cluster and the registry:
 kubectl delete namespace bernstein
 ```
 
-**This deletes the votes:** the PostgreSQL disk goes with its PVC (`reclaimPolicy: Delete`, [ADR 0007](doc/adr/0007-postgres-statefulset.md)). The next deploy starts with an empty database.
+**This deletes the votes:** the PostgreSQL disk goes with its PVC (`reclaimPolicy: Delete`, [ADR 0007](doc/adr/0007-postgres-statefulset.md)). The next deploy starts with an empty database, and gets new public IPs: deleting the Services released the old ones (seen in #39).
 
 Delete everything, after the defense:
 
@@ -158,11 +180,11 @@ az group delete --name <resource-group> --yes   # every resource in the group: c
 
 ## 7. Troubleshooting
 
-| Symptom                                                                                                                                             | Likely cause                                                                          | Fix                                                                                                                                                                                                                                                        |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ImagePullBackOff` on poll, worker or result                                                                                                        | the cluster cannot pull from the registry, or `kubectl apply -k k8s/` was run by hand | check the `AcrPull` role ([setup guide, step 6](doc/setup/cluster-setup.md#6-connect-kubectl-to-the-cluster)) and [attach the registry](doc/setup/cluster-setup.md#already-have-a-cluster-attach-the-registry) if missing; deploy with `scripts/deploy.sh` |
-| `EXTERNAL-IP` stays `<pending>`                                                                                                                     | Azure is still creating the public IP                                                 | wait 1 to 2 minutes (the script waits up to 5)                                                                                                                                                                                                             |
-| worker restarts, Result not ready; `kubectl -n bernstein logs deploy/worker` says `password authentication failed` or `password is an empty string` | `POSTGRES_PASSWORD` is empty, or differs from the one the database was created with   | put that password back in `k8s/secrets.env` and redeploy ([app secrets](#app-secrets-k8ssecretsenv))                                                                                                                                                       |
-| `kubectl` cannot reach the cluster after a restart                                                                                                  | the API server IP changed                                                             | `az aks get-credentials -g <resource-group> -n <cluster> --overwrite-existing`                                                                                                                                                                             |
-| `scripts/deploy.sh` stops with `ERROR: ...`                                                                                                         | a prerequisite is missing                                                             | the message names it and the command to fix it                                                                                                                                                                                                             |
-| `tests/zero-downtime.sh` shows timeouts on Poll **and** Result at the same seconds                                                                  | the test machine's own connection is busy (a big push, a system update downloading)   | rerun from an idle connection or another machine. A real rollout problem only hits the app being updated                                                                                                                                                   |
+| Symptom                                                                                                                                             | Likely cause                                                                          | Fix                                                                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `ImagePullBackOff` on poll, worker or result                                                                                                        | the cluster cannot pull from the registry, or `kubectl apply -k k8s/` was run by hand | [check the pull permission](#check-the-pull-permission); deploy with `scripts/deploy.sh`                                   |
+| `EXTERNAL-IP` stays `<pending>`                                                                                                                     | Azure is still creating the public IP                                                 | wait 1 to 2 minutes (the script waits up to 5)                                                                             |
+| worker restarts, Result not ready; `kubectl -n bernstein logs deploy/worker` says `password authentication failed` or `password is an empty string` | `POSTGRES_PASSWORD` is empty, or differs from the one the database was created with   | put that password back in `k8s/secrets.env` and redeploy ([app secrets](#app-secrets-k8ssecretsenv))                       |
+| `kubectl` cannot reach the cluster after a restart (`i/o timeout`)                                                                                  | right after `az aks start` the API server can need a minute, or its IP changed        | wait a minute and retry; if it still fails: `az aks get-credentials -g <resource-group> -n <cluster> --overwrite-existing` |
+| `scripts/deploy.sh` stops with `ERROR: ...`                                                                                                         | a prerequisite is missing                                                             | the message names it and the command to fix it                                                                             |
+| `tests/zero-downtime.sh` shows timeouts on Poll **and** Result at the same seconds                                                                  | the test machine's own connection is busy (a big push, a system update downloading)   | rerun from an idle connection or another machine. A real rollout problem only hits the app being updated                   |
