@@ -114,6 +114,7 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 ├── k8s/                  # Kustomize manifests (kubectl apply -k k8s/)
 ├── poll-application/     # Provided source code and Dockerfiles: Poll, Result, Worker
 ├── scripts/              # Code map generator
+├── tests/                # Zero-downtime test
 ├── docker-compose.yml    # Local 5-service stack, also used by CI
 ├── CONTRIBUTING.md       # Local development and repo commands
 └── CLAUDE.md             # Agent instructions and project rules
