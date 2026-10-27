@@ -31,12 +31,16 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 | [0017](0017-deploy-script.md)                | Deploy             | `REGISTRY=... scripts/deploy.sh`: build, push, deploy through a generated overlay   | How does the evaluator deploy? How is the image tag set? How do we roll back?             |
 | [0018](0018-resource-requests-and-limits.md) | Resources          | Requests and limits per container, measured; Redis `maxmemory 100mb` + `noeviction` | Why these values? How would we limit Redis's CPU? What if Redis fills up?                 |
 | [0019](0019-postgres-backup.md)              | Backup             | Manual `pg_dump`, no automation, no failover                                        | How do you back up the votes? What would you do in production?                            |
+| [0020](0020-no-gitops.md)                    | GitOps             | No Argo CD or Flux: deploys are pushed with `scripts/deploy.sh`                     | Why no GitOps? What if someone edits the cluster by hand?                                 |
+| [0021](0021-no-infrastructure-as-code.md)    | Infrastructure     | No Terraform or Bicep: `az` commands in the setup guide                             | Why no Infrastructure as Code? How would you recreate the cluster?                        |
+| [0022](0022-no-https.md)                     | HTTPS              | Plain HTTP on port 80, no domain name                                               | Why no HTTPS? What would it take?                                                         |
+| [0023](0023-security-posture.md)             | Security           | Hardened containers, private data stores; cluster defaults kept and listed          | What is exposed? Who can reach the API server? How are Secrets stored?                    |
 
 ## By file
 
 | File                                  | ADRs                                                                                                                                                                                                                                   |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Azure resources (cluster, registry)   | [0001](0001-aks-cluster.md), [0002](0002-acr-registry.md)                                                                                                                                                                              |
+| Azure resources (cluster, registry)   | [0001](0001-aks-cluster.md), [0002](0002-acr-registry.md), [0021](0021-no-infrastructure-as-code.md), [0023](0023-security-posture.md)                                                                                                 |
 | `k8s/kustomization.yaml`              | [0003](0003-kustomize.md), [0005](0005-image-tags-git-sha.md), [0006](0006-secrets-secretgenerator.md), [0017](0017-deploy-script.md)                                                                                                  |
 | `k8s/secrets.env.example`             | [0006](0006-secrets-secretgenerator.md)                                                                                                                                                                                                |
 | `k8s/postgres.yaml`, `k8s/schema.sql` | [0007](0007-postgres-statefulset.md), [0018](0018-resource-requests-and-limits.md), [0019](0019-postgres-backup.md)                                                                                                                    |
@@ -54,5 +58,7 @@ What breaks, and where we explain why we accept it:
 
 - **PostgreSQL has 1 replica.** Draining its node made Result fail 47 requests over 39 s while the disk moved. Only a replicated database would fix it. [0007](0007-postgres-statefulset.md), [0014](0014-pod-disruption-budgets.md) No automated backup: a manual dump. [0019](0019-postgres-backup.md)
 - **Redis has 1 replica, in memory.** A Redis restart (about 4 s) makes Poll unready; votes still queued in Redis are lost if it crashes. [0009](0009-redis-queue.md) When full (100 MB), it refuses new votes instead of crashing. [0018](0018-resource-requests-and-limits.md)
+- **Cluster security defaults.** Public API server without IP ranges, local accounts on, no NetworkPolicy, no Pod Security Standards enforced. [0023](0023-security-posture.md)
+- **HTTP only.** Votes and the voter cookie travel in clear. [0022](0022-no-https.md)
 - **The worker has no `SIGTERM` hook.** A vote popped in the sub-millisecond window before its upsert is lost if the pod stops then. [0010](0010-worker-deployment.md)
 - **Free tier and B-series nodes.** No API server SLA, and a long load test can use up the CPU credits. [0001](0001-aks-cluster.md)
