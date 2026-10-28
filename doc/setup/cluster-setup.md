@@ -205,24 +205,37 @@ az acr repository list --name "$ACR" -o table                          # what th
 az acr repository show-tags --name "$ACR" --repository poll -o table   # tags of one image
 ```
 
-### (Optional) Push from GitHub CI
+### (Optional) Log GitHub CI in to the registry (OIDC)
 
-> **To be decided in #13 (OIDC preferred).** The service principal below relies on a long-lived password stored in GitHub. OIDC with a federated credential needs no stored secret ([Microsoft Learn: GitHub Actions with OIDC](https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect)). Kept here as a fallback only.
+The CI job "Registry Login (Azure OIDC)" logs in to the registry with no password stored in GitHub ([ADR 0032](../adr/0032-ci-registry-oidc.md)): GitHub gives the job a short-lived token, and Entra ID trusts it through a federated credential of an app that has `AcrPush` on the registry ([Microsoft Learn: GitHub Actions with OIDC](https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect)). Already done for our repository and registry.
 
-Create a service principal limited to pushing:
+Run by the owner of the subscription: assigning a role needs `Owner` or `User Access Administrator`. `REPO` is the GitHub repository that runs the CI.
 
 ```bash
-ACR_ID=$(az acr show --name bernsteinacrmaeva --query id -o tsv)
-az ad sp create-for-rbac --name bernstein-ci --role AcrPush --scopes "$ACR_ID"
+REPO=Nexlein/Bernstein
+APP_ID=$(az ad app create --display-name bernstein-github-ci --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+for cred in "main:ref:refs/heads/main" "pr:pull_request"; do
+  az ad app federated-credential create --id "$APP_ID" --parameters "{
+    \"name\": \"bernstein-gh-actions-${cred%%:*}\",
+    \"issuer\": \"https://token.actions.githubusercontent.com\",
+    \"subject\": \"repo:$REPO:${cred#*:}\",
+    \"audiences\": [\"api://AzureADTokenExchange\"]}"
+done
+az role assignment create --assignee "$APP_ID" --role AcrPush --scope "$(az acr show --name "$ACR" --query id -o tsv)"
 ```
 
-Add in GitHub → Settings → Secrets and variables → Actions:
+Then the 4 GitHub secrets (Settings → Secrets and variables → Actions, or `gh`). They are identifiers, not passwords; the job fails with the list of the missing ones:
 
-- `ACR_LOGIN_SERVER` = `bernsteinacrmaeva.azurecr.io`
-- `ACR_USERNAME` = `appId`
-- `ACR_PASSWORD` = `password`
+```bash
+gh secret set AZURE_CLIENT_ID --repo "$REPO" --body "$APP_ID"
+gh secret set AZURE_TENANT_ID --repo "$REPO" --body "$(az account show --query tenantId -o tsv)"
+gh secret set AZURE_SUBSCRIPTION_ID --repo "$REPO" --body "$(az account show --query id -o tsv)"
+gh secret set ACR_NAME --repo "$REPO" --body "$ACR"
+```
 
-> Never commit these values.
+- The 2 subjects cover a push to `main` (also `schedule` and `workflow_dispatch` runs on `main`) and the pull requests. A job with an `environment:` gets the subject `environment:<name>` and would need one more credential.
+- In a fork, set `REPO` to the fork, and change the repository name in the job's `if:` in `.github/workflows/ci.yml`, or the job is skipped.
 
 ---
 
