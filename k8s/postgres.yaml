@@ -64,6 +64,17 @@ spec:
                 secretKeyRef:
                   name: app-secrets
                   key: POSTGRES_PASSWORD
+            # Passwords of the app users, set by users.sh (first start, and every deploy).
+            - name: RESULT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: RESULT_DB_PASSWORD
+            - name: WORKER_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: WORKER_DB_PASSWORD
           readinessProbe:
             exec:
               command: ['sh', '-c', 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']

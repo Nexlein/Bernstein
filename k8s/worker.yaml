@@ -48,11 +48,15 @@ spec:
             - configMapRef:
                 name: app-config
           env:
+            # Database user that may only read, insert and update votes (k8s/users.sh).
+            # Overrides POSTGRES_USER from app-config.
+            - name: POSTGRES_USER
+              value: worker_writer
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
-                  key: POSTGRES_PASSWORD
+                  key: WORKER_DB_PASSWORD
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:

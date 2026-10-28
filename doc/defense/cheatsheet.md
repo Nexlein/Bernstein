@@ -118,12 +118,13 @@ Détails : [guide 9.6](k8s-study-guide.md#96-une-dépendance-tombe), [ADR 0009](
 
 ## 9. « Qui peut parler à Postgres ? »
 
-Seuls le worker et Result, sur le port 5432. Tout le namespace est fermé, en entrée et en sortie, puis chaque flux de l'app est ouvert : DNS, internet vers poll et result (port 80), poll vers redis, worker vers redis et postgres, result vers postgres. Cilium applique les règles. Mesuré : depuis un pod Poll, Redis répond ; Postgres et internet partent en timeout.
+Seuls le worker et Result, sur le port 5432, chacun avec son utilisateur : `result_reader` peut seulement lire les votes, `worker_writer` lire, ajouter et modifier. Aucun ne connaît le mot de passe du superutilisateur `postgres`. Mesuré : depuis Result, `INSERT` et `DELETE` donnent `permission denied for table votes`. Tout le namespace est fermé, en entrée et en sortie, puis chaque flux de l'app est ouvert : DNS, internet vers poll et result (port 80), poll vers redis, worker vers redis et postgres, result vers postgres. Cilium applique les règles. Mesuré : depuis un pod Poll, Redis répond ; Postgres et internet partent en timeout.
 
 ```bash
 kubectl -n bernstein get networkpolicy
 kubectl -n bernstein exec deploy/poll -- python -c "import socket; socket.create_connection(('redis', 6379), 3); print('redis ok')"
 kubectl -n bernstein exec deploy/poll -- python -c "import socket; socket.create_connection(('postgres', 5432), 3)"   # TimeoutError
+kubectl -n bernstein exec postgres-0 -- psql -U postgres -c '\dp votes'   # result_reader=r, worker_writer=arw
 ```
 
 Détails : [ADR 0025](../adr/0025-network-policies.md), [guide 8 ter](k8s-study-guide.md#8-ter-k8snetwork-policiesyaml-ligne-par-ligne).

@@ -80,11 +80,14 @@ spec:
             - configMapRef:
                 name: app-config
           env:
+            # Read-only database user (k8s/users.sh). Overrides POSTGRES_USER from app-config.
+            - name: POSTGRES_USER
+              value: result_reader
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
-                  key: POSTGRES_PASSWORD
+                  key: RESULT_DB_PASSWORD
           # Liveness: the process answers. Readiness: it also reaches PostgreSQL.
           livenessProbe:
             httpGet:

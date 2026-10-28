@@ -15,7 +15,7 @@ the rollouts, then prints the public URLs of Poll and Result. Run it again after
 a code change: only the apps whose code changed roll out (zero downtime).
 
 Before the first run:
-  cp k8s/secrets.env.example k8s/secrets.env   # then set POSTGRES_PASSWORD
+  cp k8s/secrets.env.example k8s/secrets.env   # then set the 3 database passwords
   az login && az aks get-credentials -g <resource-group> -n <cluster>
   The cluster must be allowed to pull from REGISTRY (az aks update --attach-acr).
 
@@ -79,9 +79,11 @@ case $REGISTRY in
   *.azurecr.io) command -v az >/dev/null || die "az (Azure CLI) is not installed; it logs in to $REGISTRY." ;;
 esac
 [ -f k8s/secrets.env ] ||
-  die "k8s/secrets.env is missing. Run: cp k8s/secrets.env.example k8s/secrets.env, then set POSTGRES_PASSWORD."
-grep -Eq '^POSTGRES_PASSWORD=.+' k8s/secrets.env ||
-  die "POSTGRES_PASSWORD is empty in k8s/secrets.env."
+  die "k8s/secrets.env is missing. Run: cp k8s/secrets.env.example k8s/secrets.env, then set the passwords."
+for secret in POSTGRES_PASSWORD RESULT_DB_PASSWORD WORKER_DB_PASSWORD; do
+  grep -Eq "^$secret=.+" k8s/secrets.env ||
+    die "$secret is empty in k8s/secrets.env (see k8s/secrets.env.example)."
+done
 
 # --- Image tags ----------------------------------------------------------------------
 # One tag per app: the last commit that changed its folder. An app whose code did not
@@ -183,7 +185,17 @@ step "Waiting for the rollouts"
 # A Deployment whose new pods never get Ready fails after progressDeadlineSeconds (2 min).
 # Its old pods keep serving: nothing is rolled back automatically, the operator decides.
 failed=""
-for resource in statefulset/postgres deployment/redis deployment/worker deployment/poll deployment/result; do
+kubectl -n "$NAMESPACE" rollout status --timeout=5m statefulset/postgres || failed=" statefulset/postgres"
+if [ -z "$failed" ]; then
+  # The app users (k8s/users.sh): the image creates them in a new database; this run adds them
+  # to an existing one and applies a password changed in secrets.env. Idempotent.
+  echo "Syncing the PostgreSQL users of Result and the worker."
+  kubectl -n "$NAMESPACE" exec postgres-0 -c postgres -- sh /docker-entrypoint-initdb.d/users.sh || {
+    echo "ERROR: k8s/users.sh failed in postgres-0 (see above). Result and the worker cannot log in." >&2
+    exit 1
+  }
+fi
+for resource in deployment/redis deployment/worker deployment/poll deployment/result; do
   kubectl -n "$NAMESPACE" rollout status --timeout=5m "$resource" || failed="$failed $resource"
 done
 if [ -n "$failed" ]; then

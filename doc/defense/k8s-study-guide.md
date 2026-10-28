@@ -64,7 +64,7 @@ Avancement :
 | ----------------------- | ---------------------- | ----------------------- | ------------------------------------------------------------- |
 | Namespace               | `bernstein`            | `namespace.yaml`        | Le « dossier » qui contient tout le reste                     |
 | ConfigMap               | `app-config-<hash>`    | `kustomization.yaml`    | Adresses et noms (Redis, Postgres)                            |
-| ConfigMap               | `postgres-init-<hash>` | `kustomization.yaml`    | Le fichier `schema.sql`                                       |
+| ConfigMap               | `postgres-init-<hash>` | `kustomization.yaml`    | Les fichiers `schema.sql` et `users.sh`                       |
 | Secret                  | `app-secrets-<hash>`   | `kustomization.yaml`    | Les mots de passe (`secrets.env`)                             |
 | Service                 | `postgres`             | `postgres.yaml`         | Adresse interne de la base                                    |
 | Service                 | `redis`                | `redis.yaml`            | Adresse interne de la file                                    |
@@ -200,15 +200,16 @@ Crée un ConfigMap à partir de paires `CLÉ=valeur` :
 
 - `REDIS_HOST=redis` et `POSTGRES_HOST=postgres` sont les **noms des Services**, donc des noms DNS.
 - `POSTGRES_PORT=5432` : le port standard de PostgreSQL. Dans le ConfigMap, il devient la chaîne `"5432"`, car les valeurs d'un ConfigMap sont toujours du texte.
-- `POSTGRES_DB` et `POSTGRES_USER` : la base et l'utilisateur. Postgres les lit au premier démarrage pour les créer, et worker et result les lisent pour s'y connecter.
+- `POSTGRES_DB` et `POSTGRES_USER` : la base et le superutilisateur `postgres`. Postgres les lit au premier démarrage pour les créer. Worker et result lisent `POSTGRES_DB`, mais leur manifest remplace `POSTGRES_USER` par leur propre utilisateur, aux droits limités (#109).
 
 ```yaml
 - name: postgres-init
   files:
     - schema.sql
+    - users.sh
 ```
 
-Crée un **second** ConfigMap, dont le contenu est un **fichier entier** : la clé est `schema.sql`, la valeur est le texte SQL. Monté comme un volume dans Postgres, il devient le fichier `/docker-entrypoint-initdb.d/schema.sql`.
+Crée un **second** ConfigMap, dont le contenu est fait de **fichiers entiers** : la clé est le nom du fichier, la valeur son texte. Monté comme un volume dans Postgres, il devient le dossier `/docker-entrypoint-initdb.d/`, que l'image exécute au premier démarrage, par ordre alphabétique : `schema.sql` crée la table, puis `users.sh` crée les utilisateurs des apps (partie 4).
 
 `k8s/schema.sql` est une **copie** de `poll-application/schema.sql`, car Kustomize refuse de lire un fichier hors de `k8s/` (règle de sécurité, même via un lien symbolique). La CI vérifie que les 2 fichiers sont identiques.
 
@@ -535,9 +536,22 @@ volumeClaimTemplates:
 
 1. Le StatefulSet crée la PVC `data-postgres-0`, puis AKS crée le disque Azure.
 2. Le pod `postgres-0` démarre sur un nœud, et le disque y est rattaché.
-3. **Disque vide** : `initdb` crée la base avec les 3 variables, puis exécute `schema.sql` (création de la table `votes`).
+3. **Disque vide** : `initdb` crée la base avec les 3 variables, puis exécute `schema.sql` (création de la table `votes`) et `users.sh` (les utilisateurs des apps, ci-dessous).
 4. **Disque déjà rempli** : « Skipping initialization », et la base repart avec ses données.
 5. `pg_isready` répond, le pod devient ready, et le Service `postgres` route vers lui.
+
+### Un utilisateur par app, avec le minimum de droits (#109)
+
+| Utilisateur     | Qui                     | Droits sur `votes`           |
+| --------------- | ----------------------- | ---------------------------- |
+| `postgres`      | la base elle-même, nous | tout (superutilisateur)      |
+| `result_reader` | Result                  | `SELECT`                     |
+| `worker_writer` | le worker               | `SELECT`, `INSERT`, `UPDATE` |
+
+- Le worker fait un upsert (`INSERT … ON CONFLICT (id) DO UPDATE`). PostgreSQL exige `SELECT` sur les colonnes que `ON CONFLICT` lit, d'où le `SELECT`.
+- Ni `DELETE`, ni `TRUNCATE`, ni `DROP`, ni `CREATE` : mesuré sur AKS, Result reçoit `permission denied for table votes`, et `DROP TABLE` répond `must be owner of table votes`.
+- Les apps ne connaissent plus le mot de passe de `postgres`. Chacune reçoit le sien (`RESULT_DB_PASSWORD`, `WORKER_DB_PASSWORD` dans `secrets.env`).
+- `k8s/users.sh` crée ou met à jour les 2 utilisateurs. Il tourne au premier démarrage (base vide), puis `scripts/deploy.sh` le relance à chaque déploiement via `kubectl exec postgres-0`. Une base existante reçoit donc les utilisateurs, et un mot de passe changé est appliqué. `psql` lit les mots de passe dans l'environnement (`\getenv`) : ils n'apparaissent dans aucune ligne de commande.
 
 ### Questions probables
 
@@ -739,15 +753,17 @@ envFrom:
 
 ```yaml
 env:
+  - name: POSTGRES_USER
+    value: worker_writer
   - name: POSTGRES_PASSWORD
     valueFrom:
-      secretKeyRef: { name: app-secrets, key: POSTGRES_PASSWORD }
+      secretKeyRef: { name: app-secrets, key: WORKER_DB_PASSWORD }
   - name: REDIS_PASSWORD
     valueFrom:
       secretKeyRef: { name: app-secrets, key: REDIS_PASSWORD, optional: true }
 ```
 
-Les 2 mots de passe, pris un par un dans le Secret. Celui de Redis est optionnel.
+Les 2 mots de passe, pris un par un dans le Secret. Celui de Redis est optionnel. `POSTGRES_USER` déclaré dans `env` **l'emporte** sur celui d'`envFrom` : le worker se connecte en `worker_writer`, pas en `postgres` (partie 4).
 
 ### Les probes HTTP
 
@@ -1042,12 +1058,14 @@ envFrom:
   - configMapRef:
       name: app-config
 env:
+  - name: POSTGRES_USER
+    value: result_reader
   - name: POSTGRES_PASSWORD
     valueFrom:
-      secretKeyRef: { name: app-secrets, key: POSTGRES_PASSWORD }
+      secretKeyRef: { name: app-secrets, key: RESULT_DB_PASSWORD }
 ```
 
-Result lit Postgres. Il reçoit `REDIS_HOST` via `envFrom`, sans s'en servir.
+Result lit Postgres, en `result_reader` : il peut seulement lire les votes (partie 4). Il reçoit `REDIS_HOST` via `envFrom`, sans s'en servir.
 
 ### L'utilisateur
 
@@ -1308,7 +1326,7 @@ Pour chaque scénario : ce que fait Kubernetes, ce que voit l'utilisateur, et ce
 ### 9.1 Premier déploiement sur un cluster neuf
 
 ```bash
-cp k8s/secrets.env.example k8s/secrets.env   # puis remplir POSTGRES_PASSWORD
+cp k8s/secrets.env.example k8s/secrets.env   # puis remplir les 3 mots de passe
 REGISTRY=<nom>.azurecr.io scripts/deploy.sh  # build, push, déploiement, attente, URL publiques
 kubectl -n bernstein get pods -w             # dans un autre terminal, pour suivre le démarrage
 ```
@@ -1388,7 +1406,7 @@ On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on relance `
 
 - Le **hash** du ConfigMap ou du Secret change, donc son nom change. Les Pod templates qui le référencent changent aussi, et **tous les consommateurs** font un rolling update.
 - Pour `app-config` : poll, worker, result, **et postgres** (il lit `POSTGRES_DB` et `POSTGRES_USER`). Postgres a 1 seul pod, donc il est arrêté puis recréé : une coupure courte de la base.
-- **Attention au mot de passe Postgres** : il n'est lu qu'à la **création** de la base. Le changer dans `secrets.env` ne change **pas** le mot de passe de la base existante. Les apps enverraient alors le nouveau, et seraient refusées. Il faut aussi le changer dans Postgres (`ALTER USER postgres PASSWORD '…'`).
+- **Attention au mot de passe Postgres** : il n'est lu qu'à la **création** de la base. Le changer dans `secrets.env` ne change **pas** le mot de passe de la base existante. Les apps enverraient alors le nouveau, et seraient refusées. Il faut aussi le changer dans Postgres (`ALTER USER postgres PASSWORD '…'`). Les mots de passe de `result_reader` et `worker_writer`, eux, peuvent changer : chaque `deploy.sh` les applique.
 - Les anciens ConfigMaps et Secrets (avec l'ancien hash) restent dans le cluster. C'est sans effet, mais on peut les supprimer à la main.
 
 ### 9.4 Un pod plante ou est supprimé
