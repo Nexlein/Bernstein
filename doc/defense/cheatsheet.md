@@ -137,3 +137,15 @@ kubectl -n bernstein debug <pod> -it --image=busybox:1.37 --profile=restricted  
 ```
 
 Détails : [ADR 0027](../adr/0027-pod-security-standards.md), [guide partie 3](k8s-study-guide.md#3-k8snamespaceyaml-ligne-par-ligne).
+
+## 11. « Et si la nouvelle version ne démarre pas ? »
+
+Rien ne coupe. Avec `maxUnavailable: 0`, un ancien pod ne s'arrête qu'une fois un nouveau ready : le nouveau ne l'est jamais, donc les 2 anciens servent toujours. Après 2 min sans progrès (`progressDeadlineSeconds: 120`), le rollout passe en échec ; `deploy.sh` s'arrête et affiche les commandes de retour arrière. Pas de rollback automatique : rien ne presse, on lit d'abord la cause. Mesuré : tag inexistant, crash au démarrage, Redis injoignable : 0 erreur dans le cluster.
+
+```bash
+kubectl -n bernstein get pods                      # le nouveau : ImagePullBackOff, CrashLoopBackOff ou 0/1
+kubectl -n bernstein describe pod <nouveau pod>    # la cause, dans Events
+kubectl -n bernstein rollout undo deploy/poll      # retour à la version précédente
+```
+
+Détails : [guide 9.2 bis](k8s-study-guide.md#92-bis-une-mise-à-jour-cassée-la-nouvelle-version-ne-démarre-pas), [`DEPLOY.md`, When an update fails](../../DEPLOY.md#when-an-update-fails).
