@@ -181,7 +181,7 @@ images:
 
 Pourquoi un overlay généré : l'évaluateur ne peut pas tirer les images depuis notre registry, et le script ne modifie aucun fichier suivi par git ([ADR 0017](../adr/0017-deploy-script.md)). **Conséquence** : `kubectl apply -k k8s/` seul déploie des images sans registry, qui finissent en `ImagePullBackOff`. On déploie toujours avec le script.
 
-`postgres` et `redis` ne sont pas concernés : ils utilisent des images publiques (`postgres:18-alpine`, `redis:8-alpine`) écrites directement dans leur manifest.
+`postgres` et `redis` ne sont pas concernés : ils utilisent des images publiques, figées par version et digest, écrites directement dans leur manifest (#98, partie 4).
 
 ### Les ConfigMaps générés
 
@@ -380,14 +380,17 @@ Ces deux réglages sont les mêmes dans les 5 fichiers (`postgres`, `redis`, `wo
 ```yaml
 containers:
   - name: postgres
-    image: postgres:18-alpine
+    image: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     ports:
       - name: postgres
         containerPort: 5432
 ```
 
 - `containers` : une liste, car un pod peut avoir plusieurs conteneurs. Ici, un seul.
-- `image: postgres:18-alpine` : l'image officielle, en version Alpine (plus légère). C'est la même que dans `docker-compose.yml`. Pas de passage par `images` dans la kustomization : c'est une image publique.
+- `image` : l'image officielle de PostgreSQL 18.6, en version Alpine (plus légère), la même que dans `docker-compose.yml`. Pas de passage par `images` dans la kustomization : c'est une image publique.
+  - **`@sha256:…` fige l'image** : un tag comme `18-alpine` bouge à chaque nouvelle version, donc un nouveau nœud (à chaque `az aks start`) pourrait tirer une autre version sans aucun commit. Avec le digest, chaque nœud tire exactement la même image.
+  - Dependabot propose les nouvelles versions mineures par PR ; jamais la 19 : changer de version majeure demande un `pg_upgrade` des données.
+  - Mettre à jour l'image redémarre Postgres (1 seul pod) : mesuré, Result coupé 49 s, Poll 0 erreur, votes conservés.
 - `containerPort: 5432` : **documente** le port écouté et lui donne un nom (`postgres`), réutilisé par `targetPort` du Service. Ça n'ouvre et ne ferme aucun port : Postgres écoute sur 5432 de toute façon.
 
 ### Les variables d'environnement
@@ -631,7 +634,7 @@ L'uid 999 et le gid 1000 sont ceux de l'utilisateur `redis` dans l'image Alpine 
 ### La commande de démarrage
 
 ```yaml
-image: redis:8-alpine
+image: redis:8.10-alpine@sha256:47b08295737773de3b711fb86f13ae802f5074e96a9a2d29f5f80164ac08c046
 command:
   - sh
   - -c
