@@ -1449,6 +1449,8 @@ Ce qui protège Poll et Result :
 
 Le 2e cas est la limite connue : Postgres n'a qu'**un** replica. Pendant que son disque Azure change de nœud, les 2 pods Result sont non ready (leur `/readyz` dépend de la base), et le Service n'a plus de destination. Poll, lui, tient : Redis est revenu avant que sa readiness ne bascule. Seule une base répliquée réglerait ce cas ([ADR 0007](../adr/0007-postgres-statefulset.md)).
 
+**Testé aussi à chaque PR** (#74) : la CI draine un worker d'un cluster kind sous requêtes continues, celui qui n'a pas Postgres (sur kind, son volume ne peut pas changer de nœud). Premier run : 0 erreur sur 1002 requêtes ([ADR 0031](../adr/0031-ci-kind-e2e.md)).
+
 Pour remettre le nœud en service : `kubectl uncordon <nœud>`. Les pods ne reviennent pas tout seuls dessus : seuls les **nouveaux** pods y seront placés.
 
 ### 9.6 Une dépendance tombe
