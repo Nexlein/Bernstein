@@ -1,6 +1,6 @@
 # ADR 0017: One-command deploy script with a generated overlay
 
-**Status:** Accepted · **Date:** 2026-10-27 · **Issues:** #36, #38, #108, #106
+**Status:** Accepted · **Date:** 2026-10-27 · **Issues:** #36, #38, #108, #106, #99
 
 ## Decision
 
@@ -20,6 +20,8 @@ A rollout with no new Ready pod for 2 minutes fails (`progressDeadlineSeconds: 1
 - **`--platform linux/amd64`:** the AKS nodes are amd64. Built on an Apple Silicon Mac without it, the images would be arm64 and fail to start.
 - **Fails before changing anything** when `REGISTRY`, a tool, `k8s/secrets.env`, `POSTGRES_PASSWORD` or the cluster is missing, and prints the command to fix it. It renders the manifests before the builds, so a manifest error shows in seconds.
 - **"Done" means reachable:** it waits for every rollout and for both public IPs.
+- **An unexpected failure names itself (#99).** With `set -e`, a command with no `|| die` stopped the script with exit 1 and no `ERROR` line (seen once during #33). An `ERR` trap now prints the step, the line and the command, for example `ERROR: step "Applying the manifests" failed (exit 1) at scripts/deploy.sh line 206: kubectl apply -k .deploy`. Only the main shell reports, so a failure inside `$(...)` prints one line. Tested with failing fakes of `kubectl apply` and `docker build`; a real deploy on AKS printed nothing extra.
+- **It warns when the NetworkPolicies would not be enforced** ([ADR 0025](0025-network-policies.md)).
 - **A broken update fails in 2 minutes, without downtime.** With `maxUnavailable: 0`, an old pod stops only after a new one is Ready, so a new version that never gets Ready leaves the old pods serving. Kubernetes only reports a stalled rollout: after `progressDeadlineSeconds` it sets `ProgressDeadlineExceeded`, and `kubectl rollout status` exits non-zero. ([Kubernetes, Failed Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#failed-deployment)) The default deadline is 600 s: the script would wait 10 minutes. Our pods start in 1 to 13 s, plus up to about 20 s of image pull on a fresh node, so 120 s leaves a wide margin.
 - **No automatic rollback:** the old pods keep serving, so nothing is urgent. The operator first reads why (`describe` of the new pod), then chooses: fix and redeploy, `rollout undo` of that Deployment, or `POLL_TAG=<good tag>` (the failed app's variable, which the message prints).
 - **The tag check** stops a mistyped `TAG` or `POLL_TAG` before anything is applied, instead of new pods stuck in `ImagePullBackOff`.
