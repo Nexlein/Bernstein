@@ -80,3 +80,14 @@ Run it locally as CI does (needs `k8s/secrets.env`). Without `yq`, the Python li
 kubectl kustomize k8s/ | yq ea -o=json '[.]' | node scripts/check-baseline.mjs
 kubectl kustomize k8s/ | python3 -c 'import sys,yaml,json; json.dump(list(yaml.safe_load_all(sys.stdin)), sys.stdout)' | node scripts/check-baseline.mjs
 ```
+
+### End-to-end test on kind
+
+The CI job "K8s on kind (deploy and vote)" deploys `k8s/` on a throwaway kind cluster and casts a vote ([ADR 0031](doc/adr/0031-ci-kind-e2e.md)). To run the same cluster locally (needs Docker and [kind](https://kind.sigs.k8s.io/) v0.33.0):
+
+```bash
+kind create cluster --name bernstein --config tests/kind.yaml --image kindest/node:v1.36.4
+kind delete cluster --name bernstein
+```
+
+Then follow the steps of the `kind-e2e` job in `.github/workflows/ci.yml`: build the 3 images as `poll:ci`, `worker:ci` and `result:ci`, `kind load docker-image` them, and apply the overlay.
