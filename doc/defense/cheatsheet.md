@@ -2,7 +2,7 @@
 
 Une question, la réponse en 2-3 lignes, la commande à montrer. Les explications sont dans les ADR et le [guide d'étude](k8s-study-guide.md) : ouvrir le lien si l'évaluateur creuse, ne pas réciter.
 
-Avant la soutenance : `kubectl config current-context` doit afficher `bernstein-aks`. Garder un terminal avec `kubectl -n bernstein get pods -o wide -w` ouvert. Pour prouver qu'il n'y a pas d'erreur pendant une action, la lancer sous le test de requêtes continues : `tests/zero-downtime.sh -- <commande>` ([ADR 0016](../adr/0016-zero-downtime-test.md)). Juste avant, `DURATION=60 tests/zero-downtime.sh`, sans rien déployer, doit afficher `PASS`. Sinon c'est la connexion de la machine, pas le cluster (mesuré : jusqu'à 1,6 % de timeouts au repos depuis une connexion domestique) : changer de connexion.
+Avant la soutenance : `kubectl config current-context` doit afficher `bernstein-aks`. Garder un terminal avec `kubectl -n bernstein get pods -o wide -w` ouvert. Pour prouver qu'il n'y a pas d'erreur pendant une action, la lancer sous le test de requêtes continues : `tests/zero-downtime.sh --from both -- <commande>` ([ADR 0016](../adr/0016-zero-downtime-test.md)). Les lignes `@cluster` viennent d'un pod dans le cluster : elles ne dépendent pas du réseau de la salle. Juste avant, `DURATION=60 tests/zero-downtime.sh`, sans rien déployer, doit afficher `PASS`. Sinon c'est la connexion de la machine, pas le cluster (mesuré : jusqu'à 1,6 % de timeouts au repos depuis une connexion domestique) : changer de connexion.
 
 ## 1. « Que se passe-t-il si on fait `kubectl drain` sur ce nœud ? »
 
@@ -149,3 +149,13 @@ kubectl -n bernstein rollout undo deploy/poll      # retour à la version préc�
 ```
 
 Détails : [guide 9.2 bis](k8s-study-guide.md#92-bis-une-mise-à-jour-cassée-la-nouvelle-version-ne-démarre-pas), [`DEPLOY.md`, When an update fails](../../DEPLOY.md#when-an-update-fails).
+
+## 12. « Et si le réseau de la salle fait échouer le test ? »
+
+On lance le test avec `--from both` : les mêmes requêtes partent de la machine et d'un pod dans le cluster, avec un résumé par source. Le pod ne traverse pas le réseau de la salle. Erreurs seulement sur `poll` et `result` : c'est le réseau ou le load balancer Azure. Erreurs aussi sur `poll@cluster` : c'est le cluster. Mesuré pendant un `rollout restart` : 0 erreur sur 994 requêtes depuis la machine et sur 2375 depuis le pod.
+
+```bash
+tests/zero-downtime.sh --from both -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll deploy/result'
+```
+
+Détails : [ADR 0016](../adr/0016-zero-downtime-test.md), [`DEPLOY.md` partie 4](../../DEPLOY.md#4-update-the-app-with-zero-downtime).

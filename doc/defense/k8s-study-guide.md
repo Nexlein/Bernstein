@@ -1330,7 +1330,7 @@ C'est **le** test noté. Par exemple, on change la couleur dans Poll :
 
 ```bash
 # après la modification du code, commitée ou non (le tag devient alors <sha>-dirty-<date>)
-REGISTRY=<nom>.azurecr.io tests/zero-downtime.sh -- scripts/deploy.sh
+REGISTRY=<nom>.azurecr.io tests/zero-downtime.sh --from both -- scripts/deploy.sh
 ```
 
 Le tag change, donc le Pod template change, donc le Deployment crée un **nouveau ReplicaSet**. Avec `replicas: 2`, `maxSurge: 1` et `maxUnavailable: 0` :
@@ -1354,7 +1354,7 @@ Chaque ancien pod passe d'abord **5 s en `preStop`** : il sort des endpoints tou
 
 **Piège** : lancer le test depuis la machine qui pousse les images fausse la mesure si le push est gros. Au premier déploiement (3 images neuves), l'upload a saturé la connexion : 2 timeouts pendant le push, aucun pendant le rollout. Une modification de code ne pousse qu'une petite couche, donc pas de souci en soutenance.
 
-**Autre piège, mesuré (#100)** : une connexion domestique faible perd des connexions même sans déploiement (0,2 à 1,6 % de timeouts au repos), alors qu'une sonde dans le cluster ne voyait aucune erreur sur 11 500 requêtes. Toujours lancer d'abord `DURATION=60 tests/zero-downtime.sh` sans rien déployer : il doit passer.
+**Autre piège, mesuré (#100)** : une connexion domestique faible perd des connexions même sans déploiement (0,2 à 1,6 % de timeouts au repos), alors qu'une sonde dans le cluster ne voyait aucune erreur sur 11 500 requêtes. Toujours lancer d'abord `DURATION=60 tests/zero-downtime.sh` sans rien déployer : il doit passer. Et lancer le test noté avec `--from both` : les mêmes requêtes partent aussi d'un pod dans le cluster (lignes `poll@cluster`, `result@cluster`). Une erreur vue seulement depuis la machine vient du réseau ou du load balancer Azure, pas des pods (#107).
 
 ### 9.2 bis Une mise à jour cassée (la nouvelle version ne démarre pas)
 
