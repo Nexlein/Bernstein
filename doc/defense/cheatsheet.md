@@ -162,7 +162,7 @@ Détails : [ADR 0016](../adr/0016-zero-downtime-test.md), [`DEPLOY.md` partie 4]
 
 ## 13. « Combien ça coûte, et comment limitez-vous ? »
 
-Estimé avec les prix catalogue Azure : environ 6,1 € par jour allumé, 1,0 € arrêté. Les 2 nœuds B2s_v2 et leurs disques OS font l'essentiel (5,1 €). Le plan Free d'AKS ne facture pas le control plane. On arrête le cluster dès qu'on ne s'en sert pas : il a tourné 10,9 h en 9 jours, environ 11 € dépensés sur les 100 $ du crédit étudiant. Arrêté, restent les IP publiques, le load balancer, le registry et le disque Postgres. Le coût exact du groupe `MC_…` n'est lisible que par la propriétaire de l'abonnement.
+Mesuré dans Cost Management : 5,66 € du 19 au 28 octobre, sur un crédit étudiant de 88 €. Arrêté, le cluster coûte 0,47 € par jour : les 3 IP publiques (0,32 €), le registry (0,15 €) et le disque Postgres. Allumé, on ajoute environ 0,2 € par heure pour les 2 nœuds et leurs disques OS. Le plan Free d'AKS ne facture pas le control plane, et le load balancer est gratuit dans l'offre étudiante. On arrête donc le cluster dès qu'on ne s'en sert pas. Prévision jusqu'à la soutenance : environ 12 € au total, 14 % du crédit.
 
 ```bash
 az aks stop -g bernstein-rg -n bernstein-aks

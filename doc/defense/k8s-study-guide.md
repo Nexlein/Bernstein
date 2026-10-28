@@ -1460,7 +1460,7 @@ kubectl -n bernstein scale deploy/result --replicas=4
 - `start` : les nœuds sont **nouveaux** (noms différents), et tous les pods sont recréés. Postgres retrouve son disque et ses votes.
 - L'adresse du serveur API peut changer : il faut refaire `az aks get-credentials`.
 - Le disque Azure reste facturé même cluster arrêté (quelques centimes par mois pour 1 Gi).
-- **Coût estimé** (prix catalogue Azure, [ADR 0001](../adr/0001-aks-cluster.md#cost)) : environ **6,1 € par jour allumé, 1,0 € arrêté**. Arrêté, restent facturés les 3 IP publiques et le load balancer (0,85 €/jour), le registry (0,15 €) et le disque Postgres. Les disques OS des nœuds partent sans doute avec eux : les nœuds sont neufs à chaque `start`.
+- **Coût mesuré** (Cost Management, [ADR 0001](../adr/0001-aks-cluster.md#cost)) : **0,47 € par jour arrêté**, plus **environ 0,2 € par heure allumé** (les nœuds et leurs disques OS). Arrêté, restent facturés les 3 IP publiques (0,32 €/jour), le registry (0,15 €) et le disque Postgres. Le load balancer est gratuit dans l'offre étudiante. Les disques OS partent avec les nœuds : aucun coût de disque OS les jours arrêtés.
 - Les Services `poll` et `result` existent toujours, et leurs IP publiques sont **conservées** : vérifié à chaque `start` sur notre cluster, sans garantie écrite de Microsoft. Azure les range dans le groupe de ressources du cluster (`MC_…`), où nos comptes n'ont pas le droit de lecture. En revanche, supprimer le namespace libère les IP : le déploiement suivant en reçoit de nouvelles (vu dans #39).
 
 ### 9.9 Tout supprimer
