@@ -61,3 +61,21 @@ docker compose down -v
 | `npm run format`                      | Automatically formats all code, manifests, and documentation with Prettier.                      |
 | `docker compose config`               | Validates local Docker Compose file syntax.                                                      |
 | `tests/zero-downtime.sh -- <command>` | Requests Poll and Result while `<command>` updates them; fails on any error. `--help` for usage. |
+
+### Baseline rules checked in CI
+
+`scripts/check-baseline.mjs` fails the pull request when the rendered manifests break one of these rules ([ADR 0030](doc/adr/0030-baseline-rules-check.md)):
+
+1. Every container has `requests` and `limits`, for CPU and memory.
+2. Every container runs non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false`.
+3. Every Deployment rolls with `maxSurge: 1`, `maxUnavailable: 0` and `minReadySeconds: 5`.
+4. Poll and Result keep 2+ pods: `replicas >= 2`, or an HPA with `minReplicas >= 2` and no `replicas` in the Deployment.
+5. Poll and Result have readiness and liveness probes, a `preStop` hook and a PodDisruptionBudget.
+6. Only the `poll` and `result` Services are `LoadBalancer`; the others are `ClusterIP`.
+
+Run it locally as CI does (needs `k8s/secrets.env`). Without `yq`, the Python line does the same conversion:
+
+```bash
+kubectl kustomize k8s/ | yq ea -o=json '[.]' | node scripts/check-baseline.mjs
+kubectl kustomize k8s/ | python3 -c 'import sys,yaml,json; json.dump(list(yaml.safe_load_all(sys.stdin)), sys.stdout)' | node scripts/check-baseline.mjs
+```
