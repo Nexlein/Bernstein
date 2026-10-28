@@ -244,6 +244,28 @@ jobs:
           curl -fsS --retry 10 --retry-connrefused --retry-delay 1 http://localhost:8081/readyz
           curl -fsS -o /dev/null http://localhost:8081/
 
+      # The graded test (ADR 0016), from a pod in the cluster: a port-forward reaches a single pod,
+      # the very pod a rollout replaces.
+      - name: Zero downtime during a rollout of Poll and Result
+        run: |
+          tests/zero-downtime.sh --from cluster -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result &&
+            kubectl -n bernstein rollout status deploy/poll && kubectl -n bernstein rollout status deploy/result'
+
+      # Evicts through the PodDisruptionBudgets. Not the node of postgres-0: on kind its volume is a
+      # directory of that node, so the pod could not move (ADR 0031). --pod-selector: only our pods,
+      # as kind's CoreDNS has no PodDisruptionBudget and the test's own pod has no controller.
+      - name: Zero downtime during a drain of a worker
+        run: |
+          db_node=$(kubectl -n bernstein get pod postgres-0 -o jsonpath='{.spec.nodeName}')
+          node=$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{.items[*].metadata.name}' |
+            tr ' ' '\n' | grep -vx "$db_node" | head -1)
+          echo "Draining $node (PostgreSQL runs on $db_node)."
+          kubectl -n bernstein get pods -o wide
+          tests/zero-downtime.sh --from cluster -- kubectl drain "$node" --ignore-daemonsets --delete-emptydir-data \
+            --timeout=180s --pod-selector 'app.kubernetes.io/name in (poll,result,redis,worker)'
+          kubectl -n bernstein get pods -o wide
+          kubectl uncordon "$node"
+
       - name: Show the cluster state on failure
         if: failure()
         run: |
