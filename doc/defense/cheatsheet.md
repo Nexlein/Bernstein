@@ -173,3 +173,13 @@ az aks show -g bernstein-rg -n bernstein-aks --query powerState.code -o tsv   # 
 ```
 
 Détails : [ADR 0001, Cost](../adr/0001-aks-cluster.md#cost), [`DEPLOY.md` partie 6](../../DEPLOY.md#6-stop-or-delete-cost).
+
+## 15. « Vos images ont-elles des failles connues ? »
+
+La CI scanne les 5 images avec Trivy à chaque push et chaque PR : nos 3 images, plus Postgres et Redis au digest qu'on déploie. Elle échoue sur une faille `CRITICAL` qui a un correctif, puisqu'il suffit alors de monter de version. Les `HIGH` et les `CRITICAL` sans correctif sont seulement affichées dans le résumé du job : les bloquer laisserait la CI rouge sans rien à corriger. Premier scan : aucune faille bloquante dans nos images ni dans Redis. Postgres en a 3, et la dernière image officielle est déjà la nôtre. On les accepte dans `.trivyignore.yaml`, chacune avec sa raison : 2 dans `gosu`, qui ne tourne que si le conteneur démarre en root (le nôtre tourne en UID 70), et 1 qui expire le 30 novembre, le temps que l'image officielle soit reconstruite. On utilise le binaire Trivy vérifié par checksum, pas l'action GitHub : ses tags ont été piratés en mars 2026.
+
+```bash
+trivy image --severity CRITICAL --ignore-unfixed --ignorefile .trivyignore.yaml postgres:18.6-alpine
+```
+
+Détails : [ADR 0033](../adr/0033-ci-image-scan.md), [ADR 0023](../adr/0023-security-posture.md).
