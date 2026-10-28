@@ -205,7 +205,7 @@ The external `tests/zero-downtime.sh` run at the same time logged 0.3 to 1.2 % t
 
 ## 6. Stop or delete (cost)
 
-Stop the nodes when nobody uses the app. Everything is kept. Estimated from Azure list prices ([ADR 0001](doc/adr/0001-aks-cluster.md#cost)): about **6.1 € a day running, 1.0 € a day stopped**. Stopped, the public IPs and the load balancer (0.85 € a day), the registry (0.15 €) and the PostgreSQL disk are still billed.
+Stop the nodes when nobody uses the app. Everything is kept. Measured on our subscription ([ADR 0001](doc/adr/0001-aks-cluster.md#cost)): **0.47 € a day stopped**, plus **about 0.2 € per hour running** (the nodes and their OS disks). Stopped, the 3 public IPs (0.32 € a day), the registry (0.15 €) and the PostgreSQL disk are still billed; the load balancer is free within the Azure for Students offer.
 
 ```bash
 az aks stop  -g <resource-group> -n <cluster>   # nodes off, compute not billed
@@ -218,7 +218,7 @@ Delete the app only, and keep the cluster and the registry:
 kubectl delete namespace bernstein
 ```
 
-It saves little (the 2 public IPs of Poll and Result, and their load balancer rules), and **it deletes the votes:** the PostgreSQL disk goes with its PVC (`reclaimPolicy: Delete`, [ADR 0007](doc/adr/0007-postgres-statefulset.md)). The next deploy starts with an empty database, and gets new public IPs: deleting the Services released the old ones (seen in #39).
+It saves little (the 2 public IPs of Poll and Result, 0.21 € a day), and **it deletes the votes:** the PostgreSQL disk goes with its PVC (`reclaimPolicy: Delete`, [ADR 0007](doc/adr/0007-postgres-statefulset.md)). The next deploy starts with an empty database, and gets new public IPs: deleting the Services released the old ones (seen in #39).
 
 Delete everything, after the defense:
 
