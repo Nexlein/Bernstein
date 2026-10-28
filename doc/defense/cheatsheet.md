@@ -2,7 +2,7 @@
 
 Une question, la réponse en 2-3 lignes, la commande à montrer. Les explications sont dans les ADR et le [guide d'étude](k8s-study-guide.md) : ouvrir le lien si l'évaluateur creuse, ne pas réciter.
 
-Avant la soutenance : `kubectl config current-context` doit afficher `bernstein-aks`. Garder un terminal avec `kubectl -n bernstein get pods -o wide -w` ouvert. Pour prouver qu'il n'y a pas d'erreur pendant une action, la lancer sous le test de requêtes continues : `tests/zero-downtime.sh -- <commande>` ([ADR 0016](../adr/0016-zero-downtime-test.md)).
+Avant la soutenance : `kubectl config current-context` doit afficher `bernstein-aks`. Garder un terminal avec `kubectl -n bernstein get pods -o wide -w` ouvert. Pour prouver qu'il n'y a pas d'erreur pendant une action, la lancer sous le test de requêtes continues : `tests/zero-downtime.sh --from both -- <commande>` ([ADR 0016](../adr/0016-zero-downtime-test.md)). Les lignes `@cluster` viennent d'un pod dans le cluster : elles ne dépendent pas du réseau de la salle. Juste avant, `DURATION=60 tests/zero-downtime.sh`, sans rien déployer, doit afficher `PASS`. Sinon c'est la connexion de la machine, pas le cluster (mesuré : jusqu'à 1,6 % de timeouts au repos depuis une connexion domestique) : changer de connexion.
 
 ## 1. « Que se passe-t-il si on fait `kubectl drain` sur ce nœud ? »
 
@@ -14,10 +14,11 @@ tests/zero-downtime.sh -- kubectl drain <nœud> --ignore-daemonsets --delete-emp
 kubectl uncordon <nœud>                 # le nœud reçoit de nouveau des pods (les anciens ne reviennent pas)
 ```
 
-**Avant la démo, vérifier la répartition.** Après `az aks start` (ou un pod tué), les pods d'une app peuvent être sur le même nœud : l'anti-affinity n'est que préférée. Vu le 27/10 : les 7 pods sur un seul nœud après un `start`. Pour répartir Poll et Result (mesuré : 0 erreur sur 1205 requêtes) :
+**Avant la démo, vérifier la répartition.** Après `az aks start` (ou un pod tué), les pods d'une app peuvent être sur le même nœud : l'anti-affinity n'est que préférée. Vu après chaque `start` (27/10 et 28/10) : les 7 pods sur un seul nœud. Pour vérifier, puis répartir Poll et Result (mesuré : 0 erreur sur 1205 requêtes, puis sur 1280 depuis la machine et 2765 depuis le cluster) :
 
 ```bash
-tests/zero-downtime.sh -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll deploy/result'
+kubectl -n bernstein get pods -l 'app.kubernetes.io/name in (poll,result)' -o wide
+tests/zero-downtime.sh --from both -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll deploy/result'
 ```
 
 Détails : [ADR 0014](../adr/0014-pod-disruption-budgets.md), [ADR 0013](../adr/0013-pod-anti-affinity.md), [guide 9.5](k8s-study-guide.md#95-kubectl-drain-dun-nœud-question-classique).
@@ -41,7 +42,7 @@ kubectl -n bernstein get deploy redis -o jsonpath='{.spec.template.spec.containe
 kubectl -n bernstein top pod -l app.kubernetes.io/name=redis
 ```
 
-Pour changer : `resources` dans `k8s/redis.yaml`, puis redéployer sans rebuild (`REGISTRY=<nom>.azurecr.io TAG=<tag actuel> scripts/deploy.sh`). C'est un rolling update de Redis ; mesuré sous charge : 0 erreur, et les 1755 votes envoyés pendant la bascule sont enregistrés. Détails : [ADR 0018](../adr/0018-resource-requests-and-limits.md).
+Pour changer : `resources` dans `k8s/redis.yaml`, puis `REGISTRY=<nom>.azurecr.io scripts/deploy.sh` (rien n'est reconstruit : le code n'a pas changé). C'est un rolling update de Redis ; mesuré sous charge : 0 erreur, et les 1755 votes envoyés pendant la bascule sont enregistrés. Détails : [ADR 0018](../adr/0018-resource-requests-and-limits.md).
 
 ## 4. « Comment autoscaler Poll ? »
 
@@ -87,12 +88,13 @@ Détails : [ADR 0024](../adr/0024-observability.md), [`DEPLOY.md`, Debug a broke
 
 ## 7. « Comment revenir en arrière ? »
 
-Deux façons, toutes deux en rolling update. Rapide : `rollout undo` remet le ReplicaSet précédent, gardé avec 0 pod ; le prochain deploy l'écrase. Durable : redéployer un tag connu, rien n'est reconstruit. Mesuré : 0 erreur sur 820 requêtes (`undo`), 0 sur 1017 (`TAG=`).
+Deux façons, toutes deux en rolling update. Rapide : `rollout undo` remet le ReplicaSet précédent, gardé avec 0 pod ; le prochain deploy l'écrase. Depuis le registry : redéployer un tag connu d'une app (`POLL_TAG=`), rien n'est reconstruit et les autres apps gardent leur tag. Mesuré : 0 erreur sur 820 requêtes (`undo`), 0 sur 1017 (`TAG=`), 0 sur 1270 depuis la machine et 2865 depuis le cluster (`POLL_TAG=`, seul Poll redémarre).
 
 ```bash
 kubectl -n bernstein rollout history deploy/poll
 tests/zero-downtime.sh -- sh -c 'kubectl -n bernstein rollout undo deploy/poll && kubectl -n bernstein rollout status deploy/poll'
-REGISTRY=<nom>.azurecr.io TAG=<bon tag> scripts/deploy.sh
+kubectl -n bernstein get deploy -o wide                            # le tag de chaque app
+REGISTRY=<nom>.azurecr.io POLL_TAG=<bon tag> scripts/deploy.sh
 ```
 
 Détails : [`DEPLOY.md` partie 5](../../DEPLOY.md#5-roll-back), [ADR 0005](../adr/0005-image-tags-git-sha.md).
@@ -100,7 +102,7 @@ Détails : [`DEPLOY.md` partie 5](../../DEPLOY.md#5-roll-back), [ADR 0005](../ad
 ## 8. « Et si Redis, Postgres ou le worker tombe ? »
 
 - **Redis :** Poll non ready (page indisponible), le worker redémarre et attend. Result marche, scores figés. Les votes en file sont perdus.
-- **Postgres :** Poll marche, les votes s'empilent dans Redis (100 Mo au plus). Le worker et Result sont non ready. Au retour, le worker repart seul en ~1 min : aucun vote perdu.
+- **Postgres :** Poll marche, les votes s'empilent dans Redis (100 Mo au plus). Result s'arrête et redémarre une fois (`server.js` sort quand il perd la base), puis reste non ready ; le worker aussi. Mesuré : Result coupé 13 s si Postgres revient sur le même nœud, 43 s s'il change de nœud. Au retour, le worker repart seul en ~1 min : aucun vote perdu.
 - **Worker :** tout marche, les scores sont figés jusqu'à son retour, puis la file se vide.
 
 Démo, worker arrêté puis relancé :
@@ -116,12 +118,13 @@ Détails : [guide 9.6](k8s-study-guide.md#96-une-dépendance-tombe), [ADR 0009](
 
 ## 9. « Qui peut parler à Postgres ? »
 
-Seuls le worker et Result, sur le port 5432. Tout le namespace est fermé, en entrée et en sortie, puis chaque flux de l'app est ouvert : DNS, internet vers poll et result (port 80), poll vers redis, worker vers redis et postgres, result vers postgres. Cilium applique les règles. Mesuré : depuis un pod Poll, Redis répond ; Postgres et internet partent en timeout.
+Seuls le worker et Result, sur le port 5432, chacun avec son utilisateur : `result_reader` peut seulement lire les votes, `worker_writer` lire, ajouter et modifier. Aucun ne connaît le mot de passe du superutilisateur `postgres`. Mesuré : depuis Result, `INSERT` et `DELETE` donnent `permission denied for table votes`. Tout le namespace est fermé, en entrée et en sortie, puis chaque flux de l'app est ouvert : DNS, internet vers poll et result (port 80), poll vers redis, worker vers redis et postgres, result vers postgres. Cilium applique les règles. Mesuré : depuis un pod Poll, Redis répond ; Postgres et internet partent en timeout.
 
 ```bash
 kubectl -n bernstein get networkpolicy
 kubectl -n bernstein exec deploy/poll -- python -c "import socket; socket.create_connection(('redis', 6379), 3); print('redis ok')"
 kubectl -n bernstein exec deploy/poll -- python -c "import socket; socket.create_connection(('postgres', 5432), 3)"   # TimeoutError
+kubectl -n bernstein exec postgres-0 -- psql -U postgres -c '\dp votes'   # result_reader=r, worker_writer=arw
 ```
 
 Détails : [ADR 0025](../adr/0025-network-policies.md), [guide 8 ter](k8s-study-guide.md#8-ter-k8snetwork-policiesyaml-ligne-par-ligne).
@@ -137,3 +140,36 @@ kubectl -n bernstein debug <pod> -it --image=busybox:1.37 --profile=restricted  
 ```
 
 Détails : [ADR 0027](../adr/0027-pod-security-standards.md), [guide partie 3](k8s-study-guide.md#3-k8snamespaceyaml-ligne-par-ligne).
+
+## 11. « Et si la nouvelle version ne démarre pas ? »
+
+Rien ne coupe. Avec `maxUnavailable: 0`, un ancien pod ne s'arrête qu'une fois un nouveau ready : le nouveau ne l'est jamais, donc les 2 anciens servent toujours. Après 2 min sans progrès (`progressDeadlineSeconds: 120`), le rollout passe en échec ; `deploy.sh` s'arrête et affiche les commandes de retour arrière. Pas de rollback automatique : rien ne presse, on lit d'abord la cause. Mesuré : tag inexistant, crash au démarrage, Redis injoignable : 0 erreur dans le cluster.
+
+```bash
+kubectl -n bernstein get pods                      # le nouveau : ImagePullBackOff, CrashLoopBackOff ou 0/1
+kubectl -n bernstein describe pod <nouveau pod>    # la cause, dans Events
+kubectl -n bernstein rollout undo deploy/poll      # retour à la version précédente
+```
+
+Détails : [guide 9.2 bis](k8s-study-guide.md#92-bis-une-mise-à-jour-cassée-la-nouvelle-version-ne-démarre-pas), [`DEPLOY.md`, When an update fails](../../DEPLOY.md#when-an-update-fails).
+
+## 12. « Et si le réseau de la salle fait échouer le test ? »
+
+On lance le test avec `--from both` : les mêmes requêtes partent de la machine et d'un pod dans le cluster, avec un résumé par source. Le pod ne traverse pas le réseau de la salle. Erreurs seulement sur `poll` et `result` : c'est le réseau ou le load balancer Azure. Erreurs aussi sur `poll@cluster` : c'est le cluster. Mesuré pendant un `rollout restart` : 0 erreur sur 994 requêtes depuis la machine et sur 2375 depuis le pod.
+
+```bash
+tests/zero-downtime.sh --from both -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll deploy/result'
+```
+
+Détails : [ADR 0016](../adr/0016-zero-downtime-test.md), [`DEPLOY.md` partie 4](../../DEPLOY.md#4-update-the-app-with-zero-downtime).
+
+## 13. « Combien ça coûte, et comment limitez-vous ? »
+
+Mesuré dans Cost Management : 5,66 € du 19 au 28 octobre, sur un crédit étudiant de 88 €. Arrêté, le cluster coûte 0,47 € par jour : les 3 IP publiques (0,32 €), le registry (0,15 €) et le disque Postgres. Allumé, on ajoute environ 0,2 € par heure pour les 2 nœuds et leurs disques OS. Le plan Free d'AKS ne facture pas le control plane, et le load balancer est gratuit dans l'offre étudiante. On arrête donc le cluster dès qu'on ne s'en sert pas. Prévision jusqu'à la soutenance : environ 12 € au total, 14 % du crédit.
+
+```bash
+az aks stop -g bernstein-rg -n bernstein-aks
+az aks show -g bernstein-rg -n bernstein-aks --query powerState.code -o tsv   # Stopped
+```
+
+Détails : [ADR 0001, Cost](../adr/0001-aks-cluster.md#cost), [`DEPLOY.md` partie 6](../../DEPLOY.md#6-stop-or-delete-cost).

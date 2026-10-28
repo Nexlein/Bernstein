@@ -19,11 +19,11 @@ redis, postgres: see `docker-compose.yml` (internal only).
 - `.github/`: dependabot.yml, pull_request_template.md
 - `.github/workflows/`: ci.yml, mirror.yml
 - `.husky/`: pre-commit
-- `doc/adr/`: 0000-template.md, 0001-aks-cluster.md, 0002-acr-registry.md, 0003-kustomize.md, 0004-public-access-loadbalancer.md, 0005-image-tags-git-sha.md, 0006-secrets-secretgenerator.md, 0007-postgres-statefulset.md, 0008-result-deployment.md, 0009-redis-queue.md, 0010-worker-deployment.md, 0011-poll-deployment.md, 0012-graceful-shutdown.md, 0013-pod-anti-affinity.md, 0014-pod-disruption-budgets.md, 0015-poll-gunicorn-threads.md, 0016-zero-downtime-test.md, 0017-deploy-script.md, 0018-resource-requests-and-limits.md, 0019-postgres-backup.md, 0020-no-gitops.md, 0021-no-infrastructure-as-code.md, 0022-no-https.md, 0023-security-posture.md, 0024-observability.md, 0025-network-policies.md, 0026-poll-hpa.md, 0027-pod-security-standards.md, 0030-baseline-rules-check.md, README.md
+- `doc/adr/`: 0000-template.md, 0001-aks-cluster.md, 0002-acr-registry.md, 0003-kustomize.md, 0004-public-access-loadbalancer.md, 0005-image-tags-git-sha.md, 0006-secrets-secretgenerator.md, 0007-postgres-statefulset.md, 0008-result-deployment.md, 0009-redis-queue.md, 0010-worker-deployment.md, 0011-poll-deployment.md, 0012-graceful-shutdown.md, 0013-pod-anti-affinity.md, 0014-pod-disruption-budgets.md, 0015-poll-gunicorn-threads.md, 0016-zero-downtime-test.md, 0017-deploy-script.md, 0018-resource-requests-and-limits.md, 0019-postgres-backup.md, 0020-no-gitops.md, 0021-no-infrastructure-as-code.md, 0022-no-https.md, 0023-security-posture.md, 0024-observability.md, 0025-network-policies.md, 0026-poll-hpa.md, 0027-pod-security-standards.md, 0029-manifest-schema-validation.md, 0030-baseline-rules-check.md, README.md
 - `doc/defense/`: cheatsheet.md, k8s-study-guide.md
 - `doc/setup/`: cluster-setup.md
 - `doc/subject/`: README.md, SUBJECT.md
-- `k8s/`: hpa.yaml, kustomization.yaml, namespace.yaml, network-policies.yaml, pdb.yaml, poll.yaml, postgres.yaml, redis.yaml, result.yaml, schema.sql, secrets.env.example, worker.yaml
+- `k8s/`: hpa.yaml, kustomization.yaml, namespace.yaml, network-policies.yaml, pdb.yaml, poll.yaml, postgres.yaml, redis.yaml, result.yaml, schema.sql, secrets.env.example, users.sh, worker.yaml
 - `poll-application/`: README.md, schema.sql
 - `poll-application/poll/`: .dockerignore, Dockerfile, app.py, requirements.txt, wsgi.py
 - `poll-application/poll/templates/`: index.html
