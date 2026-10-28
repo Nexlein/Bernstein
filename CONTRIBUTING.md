@@ -91,3 +91,13 @@ kind delete cluster --name bernstein
 ```
 
 Then follow the steps of the `kind-e2e` job in `.github/workflows/ci.yml`: build the 3 images as `poll:ci`, `worker:ci` and `result:ci`, `kind load docker-image` them, and apply the overlay.
+
+### Vulnerability scan
+
+The CI job "Image Vulnerability Scan" scans our 3 images, PostgreSQL and Redis with [Trivy](https://trivy.dev/) 0.76.1. It fails on a `CRITICAL` vulnerability that has a fix, unless `.trivyignore.yaml` accepts it with a reason; the counts and the full list are in the job summary ([ADR 0033](doc/adr/0033-ci-image-scan.md)). The same scan of one local image:
+
+```bash
+trivy image --scanners vuln --severity HIGH,CRITICAL --ignorefile .trivyignore.yaml poll:latest
+```
+
+When it fails: update the base image or the dependency. If no fixed image exists yet, or the vulnerable code never runs in our pods, add an entry to `.trivyignore.yaml` with a `statement`, and an `expired_at` date when a fix is coming.
