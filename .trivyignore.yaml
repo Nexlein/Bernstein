@@ -1,0 +1,22 @@
+# Known vulnerabilities we accept, read by the CI job "Image Vulnerability Scan" (ADR 0033).
+# Each entry: why it does not apply to us, and, when a fix is on its way, the date the CI starts
+# failing on it again. Remove an entry once the image that fixes it is deployed.
+vulnerabilities:
+  # postgres:18.6-alpine: gosu, built with Go 1.24.6. The image's entrypoint only runs gosu when
+  # the container starts as root (UID 0); our pod runs as UID 70 (k8s/postgres.yaml), so the
+  # binary is never executed. No newer official image on 2026-10-28.
+  - id: CVE-2025-68121
+    paths:
+      - usr/local/bin/gosu
+    statement: gosu is never executed, the PostgreSQL pod runs as UID 70
+  - id: CVE-2026-56857
+    paths:
+      - usr/local/bin/gosu
+    statement: gosu is never executed, the PostgreSQL pod runs as UID 70
+
+  # postgres:18.6-alpine: brotli-libs 1.2.0-r1, fixed in Alpine 1.2.1-r0, but the official image
+  # was not rebuilt yet on 2026-10-28. Dependabot proposes the rebuilt digest; until then, the CI
+  # fails on it again after the defense.
+  - id: CVE-2026-111497
+    statement: fix not in the official postgres image yet; take the rebuilt digest from Dependabot
+    expired_at: 2026-11-30

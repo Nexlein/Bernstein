@@ -15,7 +15,7 @@ redis, postgres: see `docker-compose.yml` (internal only).
 ## Files
 
 - `.claude/`: settings.json
-- `./`: .env.example, .gitignore, .prettierignore, .prettierrc, CLAUDE.md, CONTRIBUTING.md, DEPLOY.md, README.md, docker-compose.yml, package.json
+- `./`: .env.example, .gitignore, .prettierignore, .prettierrc, .trivyignore.yaml, CLAUDE.md, CONTRIBUTING.md, DEPLOY.md, README.md, docker-compose.yml, package.json
 - `.github/`: dependabot.yml, pull_request_template.md
 - `.github/workflows/`: ci.yml, mirror.yml
 - `.husky/`: pre-commit
