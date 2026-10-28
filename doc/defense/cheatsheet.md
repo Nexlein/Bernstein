@@ -176,10 +176,10 @@ Détails : [ADR 0001, Cost](../adr/0001-aks-cluster.md#cost), [`DEPLOY.md` parti
 
 ## 14. « Comment la CI se connecte au registry privé, sans secret ? »
 
-Par OIDC, sans aucun mot de passe dans GitHub. Pour chaque job, GitHub signe un token qui dit « dépôt `Nexlein/Bernstein`, branche `main` » (ou « pull request »). Entra ID lui fait confiance grâce à une federated credential de l'app `bernstein-github-ci`, et rend un token Azure qui expire avec le job. Cette app n'a qu'un rôle : `AcrPush` sur le registry, aucun droit sur le cluster. Les 4 secrets GitHub ne sont que des identifiants (client, tenant, subscription, nom du registry) : volés, ils ne donnent accès à rien. Un fork ou le miroir Epitech ne reçoit ni les secrets ni le token, donc le job y est sauté.
+Par OIDC, sans aucun mot de passe dans GitHub. Pour chaque job, GitHub signe un token qui dit « dépôt `Nexlein/Bernstein`, branche `main` » (ou « pull request »), avec les ID du compte et du dépôt : un nouveau dépôt du même nom n'aurait pas les mêmes ID, donc aucun accès. Entra ID lui fait confiance grâce à une federated credential de l'app `bernstein-github-ci`, et rend un token Azure qui expire avec le job. Cette app n'a qu'un rôle : `AcrPush` sur le registry, aucun droit sur le cluster. Les 4 secrets GitHub ne sont que des identifiants (client, tenant, subscription, nom du registry) : volés, ils ne donnent accès à rien. Un fork ou le miroir Epitech ne reçoit ni les secrets ni le token, donc le job y est sauté.
 
 ```bash
-az ad app federated-credential list --id <AZURE_CLIENT_ID> --query '[].subject'   # main et pull_request
+az ad app federated-credential list --id <AZURE_CLIENT_ID> --query '[].subject'   # repo:Nexlein@183351649/Bernstein@1418620429:… main et pull_request
 ```
 
 Détails : [ADR 0032](../adr/0032-ci-registry-oidc.md), [mise en place](../setup/cluster-setup.md#8-build-push-and-deploy).

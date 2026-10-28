@@ -213,13 +213,14 @@ Run by the owner of the subscription: assigning a role needs `Owner` or `User Ac
 
 ```bash
 REPO=Nexlein/Bernstein
+PREFIX=$(gh api "repos/$REPO" -q '"repo:\(.owner.login)@\(.owner.id)/\(.name)@\(.id)"')   # repo:Nexlein@183351649/Bernstein@1418620429
 APP_ID=$(az ad app create --display-name bernstein-github-ci --query appId -o tsv)
 az ad sp create --id "$APP_ID"
 for cred in "main:ref:refs/heads/main" "pr:pull_request"; do
   az ad app federated-credential create --id "$APP_ID" --parameters "{
     \"name\": \"bernstein-gh-actions-${cred%%:*}\",
     \"issuer\": \"https://token.actions.githubusercontent.com\",
-    \"subject\": \"repo:$REPO:${cred#*:}\",
+    \"subject\": \"$PREFIX:${cred#*:}\",
     \"audiences\": [\"api://AzureADTokenExchange\"]}"
 done
 az role assignment create --assignee "$APP_ID" --role AcrPush --scope "$(az acr show --name "$ACR" --query id -o tsv)"
@@ -234,7 +235,9 @@ gh secret set AZURE_SUBSCRIPTION_ID --repo "$REPO" --body "$(az account show --q
 gh secret set ACR_NAME --repo "$REPO" --body "$ACR"
 ```
 
-- The 2 subjects cover a push to `main` (also `schedule` and `workflow_dispatch` runs on `main`) and the pull requests. A job with an `environment:` gets the subject `environment:<name>` and would need one more credential.
+- The subject holds the IDs of the account and the repository: GitHub uses this immutable format for every repository created after 2026-07-15, so a new repository with the same name cannot reuse our credentials ([GitHub Docs: OIDC reference](https://docs.github.com/en/actions/reference/security/oidc)). An older repository keeps `repo:<owner>/<repo>` unless it opts in; `gh api repos/$REPO/actions/oidc/customization/sub` tells which.
+- `AADSTS700213: No matching federated identity record found` means the subject does not match: the failed `azure/login` step prints the `subject claim` GitHub sent.
+- The 2 subjects cover a push to `main` (also `schedule` and `workflow_dispatch` runs on `main`) and the pull requests. A job with an `environment:` gets the subject `<prefix>:environment:<name>` and would need one more credential.
 - In a fork, set `REPO` to the fork, and change the repository name in the job's `if:` in `.github/workflows/ci.yml`, or the job is skipped.
 
 ---
