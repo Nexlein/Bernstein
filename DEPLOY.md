@@ -104,18 +104,19 @@ REGISTRY=<name>.azurecr.io scripts/deploy.sh
 In order, the script:
 
 1. checks the prerequisites above, and stops before changing anything if one is missing;
-2. tags the images with the short git SHA (`<sha>-dirty-<date-time>` if `poll-application/` has uncommitted changes);
-3. builds `poll`, `worker` and `result` for `linux/amd64` and pushes them to your registry;
+2. tags each image with the short SHA of the last commit that changed its folder, `poll-application/<app>` (`<sha>-dirty-<date-time>` if that folder has uncommitted changes);
+3. builds for `linux/amd64` and pushes the images your registry does not have yet: an app whose code did not change keeps its tag and is not rebuilt;
 4. applies `k8s/` with those images, through a generated overlay in `.deploy/`, and waits for every rollout;
 5. waits for the public IPs and prints the URLs of Poll and Result.
 
-Measured from a fresh clone of the Epitech mirror: 2 min 11 s for the first run (base images pulled, 3 images built and pushed, disk and public IPs created); the next ones about a minute. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
+Measured from a fresh clone of the Epitech mirror: 2 min 11 s for the first run (base images pulled, 3 images built and pushed, disk and public IPs created); the next ones build and roll only the apps whose code changed. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
 
 ### Check the deployment
 
 ```bash
 kubectl -n bernstein get pods              # 7 pods READY: 2 poll, 2 result, worker, redis, postgres-0
 kubectl -n bernstein get svc poll result   # EXTERNAL-IP of Poll and Result
+kubectl -n bernstein get deploy -o wide    # IMAGES: the tag each app runs
 ```
 
 Open the Poll URL and vote, then open the Result URL: the count updates live. The votes, from the command line:
@@ -138,7 +139,7 @@ DURATION=60 tests/zero-downtime.sh
 
 If it fails, the network between your machine and Azure drops connections, and the graded run would fail for that reason: use another connection ([troubleshooting](#7-troubleshooting)). The `--from both` option below also tells such errors apart.
 
-1. Change something visible, for example the `<h3>` title in `poll-application/poll/templates/index.html`. No commit needed: uncommitted changes get a `-dirty` tag, so a new rollout. Leave the vote option labels alone: Result has them hardcoded ([ADR 0011](doc/adr/0011-poll-deployment.md)).
+1. Change something visible, for example the `<h3>` title in `poll-application/poll/templates/index.html`. No commit needed: uncommitted changes give Poll a `-dirty` tag, so a rollout of Poll only; Result and the worker keep their tag and stay `unchanged`. Leave the vote option labels alone: Result has them hardcoded ([ADR 0011](doc/adr/0011-poll-deployment.md)).
 2. Redeploy under the zero-downtime test:
 
    ```bash
@@ -154,7 +155,7 @@ If it fails, the network between your machine and Azure drops connections, and t
 3. Optional, in a second terminal: `kubectl -n bernstein get pods -w` shows the pods replaced one at a time.
 4. Reload the Poll page: the new title shows, and "Processed by container ID" names the pod that answered.
 
-Measured on AKS: live in 52 s, 0 errors in 1225 requests ([ADR 0017](doc/adr/0017-deploy-script.md)). Run the test from a machine whose connection is not busy: a big push (first deploy, all layers new) or another download slows down the test's own requests ([troubleshooting](#7-troubleshooting)).
+Measured on AKS: only Poll rebuilt and rolled, the script took 34 s (52 s when the 3 apps rolled), 0 errors in 1363 requests from the client and 3080 from inside the cluster ([ADR 0017](doc/adr/0017-deploy-script.md)). Run the test from a machine whose connection is not busy: a big push (first deploy, all layers new) or another download slows down the test's own requests ([troubleshooting](#7-troubleshooting)).
 
 ## 5. Roll back
 
@@ -167,16 +168,19 @@ Both ways are rolling updates, with zero downtime.
   kubectl -n bernstein rollout undo deploy/poll      # back to the previous one
   ```
 
-- **Lasting:** redeploy a known-good tag. Nothing is built: the images are already in the registry.
+- **From the registry:** redeploy a known-good tag of one app. Nothing is built: the image is already in the registry, and the other apps keep their tag. A later `scripts/deploy.sh` without it deploys the code as it is again: fix or revert the code too.
 
   ```bash
+  kubectl -n bernstein get deploy -o wide                                    # the tag each app runs now
   az acr repository show-tags --name <name> --repository poll --orderby time_desc -o table
-  REGISTRY=<name>.azurecr.io TAG=<good tag> scripts/deploy.sh
+  REGISTRY=<name>.azurecr.io POLL_TAG=<good tag> scripts/deploy.sh          # WORKER_TAG, RESULT_TAG for the others
   ```
 
-Measured on AKS under `tests/zero-downtime.sh`: `rollout undo` 0 errors in 820 requests, `TAG=<sha>` 0 errors in 1017.
+  `TAG=<tag>` sets the same tag for the 3 apps, for a tag they all have.
 
-With `TAG=`, the script first checks that the 3 images exist in the ACR: a mistyped tag stops it before anything is applied.
+Measured on AKS under `tests/zero-downtime.sh`: `rollout undo` 0 errors in 820 requests, `TAG=<sha>` 0 errors in 1017, `POLL_TAG=<older tag>` (only Poll rolled, 31 s) 0 errors in 1270 requests from the client and 2865 from inside the cluster.
+
+A given tag (`TAG`, `POLL_TAG`…) is never built: the script first checks that it exists in the registry, so a mistyped tag stops it before anything is applied.
 
 ### When an update fails
 
@@ -187,7 +191,7 @@ error: deployment "poll" exceeded its progress deadline
 ERROR: rollout not finished: deployment/poll. The previous pods keep serving.
   Why:       kubectl -n bernstein get pods, then describe the new pod (DEPLOY.md, Debug a broken pod)
   Roll back: kubectl -n bernstein rollout undo deployment/poll
-  Or redeploy a good tag: REGISTRY=<name>.azurecr.io TAG=<good tag> scripts/deploy.sh
+         or: REGISTRY=<name>.azurecr.io POLL_TAG=<good tag> scripts/deploy.sh
 ```
 
 Nothing is rolled back by itself: find the cause ([debug a broken pod](#debug-a-broken-pod)), then fix the code and redeploy, or roll back as above. The broken pod stays until then.

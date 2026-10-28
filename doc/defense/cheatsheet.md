@@ -42,7 +42,7 @@ kubectl -n bernstein get deploy redis -o jsonpath='{.spec.template.spec.containe
 kubectl -n bernstein top pod -l app.kubernetes.io/name=redis
 ```
 
-Pour changer : `resources` dans `k8s/redis.yaml`, puis redéployer sans rebuild (`REGISTRY=<nom>.azurecr.io TAG=<tag actuel> scripts/deploy.sh`). C'est un rolling update de Redis ; mesuré sous charge : 0 erreur, et les 1755 votes envoyés pendant la bascule sont enregistrés. Détails : [ADR 0018](../adr/0018-resource-requests-and-limits.md).
+Pour changer : `resources` dans `k8s/redis.yaml`, puis `REGISTRY=<nom>.azurecr.io scripts/deploy.sh` (rien n'est reconstruit : le code n'a pas changé). C'est un rolling update de Redis ; mesuré sous charge : 0 erreur, et les 1755 votes envoyés pendant la bascule sont enregistrés. Détails : [ADR 0018](../adr/0018-resource-requests-and-limits.md).
 
 ## 4. « Comment autoscaler Poll ? »
 
@@ -88,12 +88,13 @@ Détails : [ADR 0024](../adr/0024-observability.md), [`DEPLOY.md`, Debug a broke
 
 ## 7. « Comment revenir en arrière ? »
 
-Deux façons, toutes deux en rolling update. Rapide : `rollout undo` remet le ReplicaSet précédent, gardé avec 0 pod ; le prochain deploy l'écrase. Durable : redéployer un tag connu, rien n'est reconstruit. Mesuré : 0 erreur sur 820 requêtes (`undo`), 0 sur 1017 (`TAG=`).
+Deux façons, toutes deux en rolling update. Rapide : `rollout undo` remet le ReplicaSet précédent, gardé avec 0 pod ; le prochain deploy l'écrase. Depuis le registry : redéployer un tag connu d'une app (`POLL_TAG=`), rien n'est reconstruit et les autres apps gardent leur tag. Mesuré : 0 erreur sur 820 requêtes (`undo`), 0 sur 1017 (`TAG=`), 0 sur 1270 depuis la machine et 2865 depuis le cluster (`POLL_TAG=`, seul Poll redémarre).
 
 ```bash
 kubectl -n bernstein rollout history deploy/poll
 tests/zero-downtime.sh -- sh -c 'kubectl -n bernstein rollout undo deploy/poll && kubectl -n bernstein rollout status deploy/poll'
-REGISTRY=<nom>.azurecr.io TAG=<bon tag> scripts/deploy.sh
+kubectl -n bernstein get deploy -o wide                            # le tag de chaque app
+REGISTRY=<nom>.azurecr.io POLL_TAG=<bon tag> scripts/deploy.sh
 ```
 
 Détails : [`DEPLOY.md` partie 5](../../DEPLOY.md#5-roll-back), [ADR 0005](../adr/0005-image-tags-git-sha.md).

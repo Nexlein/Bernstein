@@ -177,7 +177,7 @@ images:
 - `resources: ../k8s` : l'overlay reprend tout `k8s/` tel quel.
 - `name` : le nom générique à chercher dans les manifests.
 - `newName` : l'adresse réelle, construite à partir de `REGISTRY`, le registry de celui qui déploie.
-- `newTag` : le SHA court du commit, ou `<sha>-dirty-<date>` si `poll-application/` a des modifications non commitées. **Changer le tag change le Pod template, donc déclenche un rolling update.**
+- `newTag` : un tag par app, le SHA court du dernier commit qui a modifié son dossier `poll-application/<app>`, ou `<sha>-dirty-<date>` si ce dossier a des modifications non commitées. Une app dont le code n'a pas changé garde son tag : `kubectl apply` la laisse `unchanged` (#106). **Changer le tag change le Pod template, donc déclenche un rolling update.**
 
 Pourquoi un overlay généré : l'évaluateur ne peut pas tirer les images depuis notre registry, et le script ne modifie aucun fichier suivi par git ([ADR 0017](../adr/0017-deploy-script.md)). **Conséquence** : `kubectl apply -k k8s/` seul déploie des images sans registry, qui finissent en `ImagePullBackOff`. On déploie toujours avec le script.
 
@@ -1333,7 +1333,7 @@ C'est **le** test noté. Par exemple, on change la couleur dans Poll :
 REGISTRY=<nom>.azurecr.io tests/zero-downtime.sh --from both -- scripts/deploy.sh
 ```
 
-Le tag change, donc le Pod template change, donc le Deployment crée un **nouveau ReplicaSet**. Avec `replicas: 2`, `maxSurge: 1` et `maxUnavailable: 0` :
+Le tag de Poll change, donc son Pod template change, donc le Deployment crée un **nouveau ReplicaSet**. Result et le worker gardent leur tag : `unchanged`, ils ne redémarrent pas, et le script ne les reconstruit pas (mesuré : 34 s au lieu de 52 s, 0 erreur). Avec `replicas: 2`, `maxSurge: 1` et `maxUnavailable: 0` :
 
 ```
 t0  ancien ReplicaSet : 2 pods (servent)      nouveau : 0
@@ -1377,14 +1377,14 @@ Testé sur AKS (#108) avec Poll, et une sonde dans le cluster qui interroge Poll
 - **`progressDeadlineSeconds: 120`** : après 2 min sans progrès, Kubernetes marque le rollout en échec. Le défaut est 600 s. Nos pods démarrent en 1 à 13 s, plus ~20 s de pull d'image au pire : 2 min laisse de la marge.
 - Kubernetes **ne fait rien d'autre** : il signale, il ne revient pas en arrière ([doc Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#failed-deployment)). Si le pod finit par devenir ready, le rollout se termine.
 - `kubectl rollout status` sort alors en erreur (`exceeded its progress deadline`). `scripts/deploy.sh` s'arrête, nomme le Deployment et affiche les commandes de retour arrière.
-- **Pas de rollback automatique dans le script non plus** : les anciens pods servent, rien ne presse. On lit d'abord la cause (`describe` du nouveau pod), puis on choisit : corriger et redéployer, `rollout undo`, ou `TAG=<bon tag>` ([ADR 0017](../adr/0017-deploy-script.md)).
-- Avec `TAG=`, le script vérifie d'abord que les 3 images existent dans l'ACR : un tag mal tapé s'arrête avant tout changement.
+- **Pas de rollback automatique dans le script non plus** : les anciens pods servent, rien ne presse. On lit d'abord la cause (`describe` du nouveau pod), puis on choisit : corriger et redéployer, `rollout undo`, ou `POLL_TAG=<bon tag>` ([ADR 0017](../adr/0017-deploy-script.md)).
+- Un tag donné (`TAG`, `POLL_TAG`…) n'est jamais construit : le script vérifie d'abord qu'il existe dans le registry. Un tag mal tapé s'arrête avant tout changement.
 
 **Mesuré** : Poll cassé déployé avec `scripts/deploy.sh` : échec après 2 min, avec le message. Puis `TAG=<tag précédent>` : Poll revenu en ~16 s, pod cassé supprimé. 0 erreur dans le cluster.
 
 ### 9.3 Changement de config ou de mot de passe
 
-On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on redéploie sans rebuild : `REGISTRY=<nom>.azurecr.io TAG=<tag actuel> scripts/deploy.sh`. Le tag actuel se lit avec `kubectl -n bernstein get deploy poll -o jsonpath='{..image}'`. `kubectl apply -k k8s/` seul remettrait des images sans registry.
+On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on relance `REGISTRY=<nom>.azurecr.io scripts/deploy.sh` : le code n'a pas changé, donc les images existent déjà et rien n'est reconstruit. Les tags en cours se lisent avec `kubectl -n bernstein get deploy -o wide`. `kubectl apply -k k8s/` seul remettrait des images sans registry.
 
 - Le **hash** du ConfigMap ou du Secret change, donc son nom change. Les Pod templates qui le référencent changent aussi, et **tous les consommateurs** font un rolling update.
 - Pour `app-config` : poll, worker, result, **et postgres** (il lit `POSTGRES_DB` et `POSTGRES_USER`). Postgres a 1 seul pod, donc il est arrêté puis recréé : une coupure courte de la base.

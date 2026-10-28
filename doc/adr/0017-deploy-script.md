@@ -1,12 +1,12 @@
 # ADR 0017: One-command deploy script with a generated overlay
 
-**Status:** Accepted · **Date:** 2026-10-27 · **Issues:** #36, #38, #108
+**Status:** Accepted · **Date:** 2026-10-27 · **Issues:** #36, #38, #108, #106
 
 ## Decision
 
 `REGISTRY=<name>.azurecr.io scripts/deploy.sh` is the whole delivery process. It checks the prerequisites, builds `poll`, `worker` and `result` for `linux/amd64`, tags them ([ADR 0005](0005-image-tags-git-sha.md)), and pushes them (`az acr login` for an ACR). It then writes a Kustomize overlay in `.deploy/` (gitignored) that points `k8s/` at those images, applies it, waits for the 5 rollouts and prints the public URLs.
 
-`k8s/kustomization.yaml` holds no registry and no tag: the manifests keep the bare names. `TAG=<existing tag>` skips the build and deploys that tag (rollback). For an ACR, it first checks that the 3 images exist.
+`k8s/kustomization.yaml` holds no registry and no tag: the manifests keep the bare names. It builds and pushes only the images the registry does not have yet: an app whose code did not change keeps its tag and is left unchanged ([ADR 0005](0005-image-tags-git-sha.md)). `TAG=<existing tag>` (the 3 apps) or `POLL_TAG=`, `WORKER_TAG=`, `RESULT_TAG=` (one app) deploy an existing tag, to roll back; the script first checks that it exists in the registry.
 
 A rollout with no new Ready pod for 2 minutes fails (`progressDeadlineSeconds: 120` on the 4 Deployments). The script then names the failed Deployment, prints the commands to find the cause and to roll back, and exits 1. It rolls nothing back by itself.
 
@@ -21,8 +21,8 @@ A rollout with no new Ready pod for 2 minutes fails (`progressDeadlineSeconds: 1
 - **Fails before changing anything** when `REGISTRY`, a tool, `k8s/secrets.env`, `POSTGRES_PASSWORD` or the cluster is missing, and prints the command to fix it. It renders the manifests before the builds, so a manifest error shows in seconds.
 - **"Done" means reachable:** it waits for every rollout and for both public IPs.
 - **A broken update fails in 2 minutes, without downtime.** With `maxUnavailable: 0`, an old pod stops only after a new one is Ready, so a new version that never gets Ready leaves the old pods serving. Kubernetes only reports a stalled rollout: after `progressDeadlineSeconds` it sets `ProgressDeadlineExceeded`, and `kubectl rollout status` exits non-zero. ([Kubernetes, Failed Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#failed-deployment)) The default deadline is 600 s: the script would wait 10 minutes. Our pods start in 1 to 13 s, plus up to about 20 s of image pull on a fresh node, so 120 s leaves a wide margin.
-- **No automatic rollback:** the old pods keep serving, so nothing is urgent. The operator first reads why (`describe` of the new pod), then chooses: fix and redeploy, `rollout undo` of that Deployment, or `TAG=<good tag>` for the 3 apps.
-- **The tag check** stops a mistyped `TAG` before anything is applied, instead of new pods stuck in `ImagePullBackOff`.
+- **No automatic rollback:** the old pods keep serving, so nothing is urgent. The operator first reads why (`describe` of the new pod), then chooses: fix and redeploy, `rollout undo` of that Deployment, or `POLL_TAG=<good tag>` (the failed app's variable, which the message prints).
+- **The tag check** stops a mistyped `TAG` or `POLL_TAG` before anything is applied, instead of new pods stuck in `ImagePullBackOff`.
 - Only `bash` (3.2+), `git`, `docker`, `kubectl` and `az`: the tools the process needs anyway.
 - **Tested on AKS** with `tests/zero-downtime.sh -- scripts/deploy.sh`:
   - First deploy over the `f880145` images: 0 errors during the rollout (1048 requests).
@@ -33,14 +33,19 @@ A rollout with no new Ready pod for 2 minutes fails (`progressDeadlineSeconds: 1
   - Poll with an image tag that does not exist (`ImagePullBackOff`), a container that exits at start (`CrashLoopBackOff`), and no reachable Redis (`Running`, never Ready): the 2 old pods kept serving.
   - That last one deployed with the script: `exceeded its progress deadline` after 2 minutes, the message, exit 1. Then `TAG=<previous tag>`: Poll back in about 16 s.
   - `TAG=does-not-exist`: `ERROR: <registry>/poll:does-not-exist not found`, exit 2, nothing applied.
+- **Per-app tags tested on AKS (#106):**
+  - Switching to the new tags: the 3 images built once, the 3 apps rolled.
+  - The defense scenario, Poll's title changed without commit: only Poll built and rolled, `worker` and `result` `unchanged`. The script took 34 s (52 s before), 0 errors in 1363 requests from the client and 3080 from inside the cluster.
+  - Undoing the change, then a run with no change: nothing built, no registry login; then every Deployment `unchanged`.
+  - `POLL_TAG=<older tag>`: only Poll rolled, in 31 s, 0 errors in 1270 and 2865 requests. `POLL_TAG=does-not-exist`: exit 2, nothing applied.
 
 ## Trade-offs
 
 - `kubectl apply -k k8s/` alone no longer gives a working app: the app images have no registry. The kustomization comment and the README say so.
 - The build runs locally: Docker is needed, and on an Apple Silicon Mac the amd64 build runs under emulation, slower (the Java worker most of all).
-- Every run rebuilds and rolls the 3 apps, even if one changed (one shared tag, [ADR 0005](0005-image-tags-git-sha.md)). Docker's layer cache keeps unchanged builds fast, and the rollouts have zero downtime.
+- Each run asks the registry whether each app's tag exists: about a second per app. Then only the apps whose code changed are built and rolled ([ADR 0005](0005-image-tags-git-sha.md)).
 - `kubectl apply` does not delete an object removed from `k8s/`. Not an issue while we only add or change objects.
-- Automatic login for ACR only: another registry needs `docker login` first. The `TAG` check also runs for an ACR only.
+- Automatic login for ACR only: another registry needs `docker login` first. There, the script checks for existing images with `docker manifest inspect`.
 - **A slow but healthy start over 2 minutes is reported as failed.** The rollout still completes when the pod gets Ready: the deadline only reports. Then `kubectl -n bernstein rollout status deploy/<app>` confirms it.
 - **The broken pod stays** (`ImagePullBackOff` or `CrashLoopBackOff`) until a rollback or a new deploy. It gets no traffic, but holds its resource requests.
 - **The PostgreSQL StatefulSet has no `progressDeadlineSeconds`.** The script's `--timeout=5m` on `rollout status` covers it.
