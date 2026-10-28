@@ -36,11 +36,13 @@ configMapGenerator:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
-  # schema.sql, run by the postgres image on its first start (empty data dir only).
-  # Copy of poll-application/schema.sql: Kustomize cannot read files outside k8s/; CI checks they match.
+  # Run by the postgres image on its first start (empty data dir only), in name order.
+  # schema.sql: copy of poll-application/schema.sql (Kustomize cannot read files outside k8s/; CI checks they match).
+  # users.sh: the app users; scripts/deploy.sh also runs it on every deploy.
   - name: postgres-init
     files:
       - schema.sql
+      - users.sh
 
 # Passwords, read from the gitignored secrets.env (template: secrets.env.example).
 # Same hash suffix as above: changing a password rolls the Deployments.

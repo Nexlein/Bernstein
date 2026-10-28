@@ -1,6 +1,6 @@
 # ADR 0013: Spread Poll and Result over the nodes with preferred anti-affinity
 
-**Status:** Accepted · **Date:** 2026-10-26 · **Issues:** #32
+**Status:** Accepted · **Date:** 2026-10-26 · **Issues:** #32, #97
 
 ## Decision
 
@@ -17,9 +17,13 @@ Poll and Result have a `podAntiAffinity` rule, `preferredDuringSchedulingIgnored
 
 - "Preferred" is not a guarantee: if one node is full or down, both replicas can end up on the other.
 - **Fact:** `IgnoredDuringExecution`: the rule only applies at scheduling; running pods are not moved. ([Kubernetes docs: Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)) After a node comes back, the spread returns at the next rollout or restart, not by itself.
+- **After every `az aks start`, all pods run on one node.** The first node to be ready gets them all: seen 5 times out of 5 checked, all 7 pods on one node. A `rollout restart` of Poll and Result spreads them again, one of each per node, with 0 errors (`DEPLOY.md`, After `az aks start`). Until then, losing or draining that node takes Poll and Result down together.
+- Redis, PostgreSQL and the worker have 1 replica each: losing their node stops them wherever they run ([ADR 0007](0007-postgres-statefulset.md), [ADR 0009](0009-redis-queue.md)). The spread protects the Poll and Result pods themselves, on a drain or a pod failure.
 
 ## Alternatives rejected
 
 - **`requiredDuringScheduling…`:** strict spread, but blocks rollouts on 2 nodes and leaves a replica `Pending` when one node is down.
 - **`topologySpreadConstraints` (`maxSkew: 1`, `whenUnsatisfiable: ScheduleAnyway`):** same result here, more flexible for many nodes or zones. Anti-affinity is simpler to read for 2 replicas on 2 nodes.
+- **Descheduler, to move the pods back by itself:** its anti-affinity strategy only reads the `required` terms ([`GetPodAntiAffinityTerms`](https://github.com/kubernetes-sigs/descheduler/blob/master/pkg/utils/predicates.go)), so it ignores our preferred rule; its spread strategy would need `topologySpreadConstraints`. One more component with the right to evict pods anywhere, for a case that only follows a manual `az aks start` and one command fixes.
+- **`topologySpreadConstraints` with `whenUnsatisfiable: DoNotSchedule`:** a strict spread, so like `required` it risks `Pending` pods when one of our 2 nodes is drained or down. Not tested, and not a change to make one week before the defense.
 - **Spreading over zones:** our nodes have no availability zones ([ADR 0007](0007-postgres-statefulset.md)).

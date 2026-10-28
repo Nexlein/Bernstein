@@ -64,7 +64,7 @@ Avancement :
 | ----------------------- | ---------------------- | ----------------------- | ------------------------------------------------------------- |
 | Namespace               | `bernstein`            | `namespace.yaml`        | Le « dossier » qui contient tout le reste                     |
 | ConfigMap               | `app-config-<hash>`    | `kustomization.yaml`    | Adresses et noms (Redis, Postgres)                            |
-| ConfigMap               | `postgres-init-<hash>` | `kustomization.yaml`    | Le fichier `schema.sql`                                       |
+| ConfigMap               | `postgres-init-<hash>` | `kustomization.yaml`    | Les fichiers `schema.sql` et `users.sh`                       |
 | Secret                  | `app-secrets-<hash>`   | `kustomization.yaml`    | Les mots de passe (`secrets.env`)                             |
 | Service                 | `postgres`             | `postgres.yaml`         | Adresse interne de la base                                    |
 | Service                 | `redis`                | `redis.yaml`            | Adresse interne de la file                                    |
@@ -177,11 +177,11 @@ images:
 - `resources: ../k8s` : l'overlay reprend tout `k8s/` tel quel.
 - `name` : le nom générique à chercher dans les manifests.
 - `newName` : l'adresse réelle, construite à partir de `REGISTRY`, le registry de celui qui déploie.
-- `newTag` : le SHA court du commit, ou `<sha>-dirty-<date>` si `poll-application/` a des modifications non commitées. **Changer le tag change le Pod template, donc déclenche un rolling update.**
+- `newTag` : un tag par app, le SHA court du dernier commit qui a modifié son dossier `poll-application/<app>`, ou `<sha>-dirty-<date>` si ce dossier a des modifications non commitées. Une app dont le code n'a pas changé garde son tag : `kubectl apply` la laisse `unchanged` (#106). **Changer le tag change le Pod template, donc déclenche un rolling update.**
 
 Pourquoi un overlay généré : l'évaluateur ne peut pas tirer les images depuis notre registry, et le script ne modifie aucun fichier suivi par git ([ADR 0017](../adr/0017-deploy-script.md)). **Conséquence** : `kubectl apply -k k8s/` seul déploie des images sans registry, qui finissent en `ImagePullBackOff`. On déploie toujours avec le script.
 
-`postgres` et `redis` ne sont pas concernés : ils utilisent des images publiques (`postgres:18-alpine`, `redis:8-alpine`) écrites directement dans leur manifest.
+`postgres` et `redis` ne sont pas concernés : ils utilisent des images publiques, figées par version et digest, écrites directement dans leur manifest (#98, partie 4).
 
 ### Les ConfigMaps générés
 
@@ -200,15 +200,16 @@ Crée un ConfigMap à partir de paires `CLÉ=valeur` :
 
 - `REDIS_HOST=redis` et `POSTGRES_HOST=postgres` sont les **noms des Services**, donc des noms DNS.
 - `POSTGRES_PORT=5432` : le port standard de PostgreSQL. Dans le ConfigMap, il devient la chaîne `"5432"`, car les valeurs d'un ConfigMap sont toujours du texte.
-- `POSTGRES_DB` et `POSTGRES_USER` : la base et l'utilisateur. Postgres les lit au premier démarrage pour les créer, et worker et result les lisent pour s'y connecter.
+- `POSTGRES_DB` et `POSTGRES_USER` : la base et le superutilisateur `postgres`. Postgres les lit au premier démarrage pour les créer. Worker et result lisent `POSTGRES_DB`, mais leur manifest remplace `POSTGRES_USER` par leur propre utilisateur, aux droits limités (#109).
 
 ```yaml
 - name: postgres-init
   files:
     - schema.sql
+    - users.sh
 ```
 
-Crée un **second** ConfigMap, dont le contenu est un **fichier entier** : la clé est `schema.sql`, la valeur est le texte SQL. Monté comme un volume dans Postgres, il devient le fichier `/docker-entrypoint-initdb.d/schema.sql`.
+Crée un **second** ConfigMap, dont le contenu est fait de **fichiers entiers** : la clé est le nom du fichier, la valeur son texte. Monté comme un volume dans Postgres, il devient le dossier `/docker-entrypoint-initdb.d/`, que l'image exécute au premier démarrage, par ordre alphabétique : `schema.sql` crée la table, puis `users.sh` crée les utilisateurs des apps (partie 4).
 
 `k8s/schema.sql` est une **copie** de `poll-application/schema.sql`, car Kustomize refuse de lire un fichier hors de `k8s/` (règle de sécurité, même via un lien symbolique). La CI vérifie que les 2 fichiers sont identiques.
 
@@ -379,14 +380,17 @@ Ces deux réglages sont les mêmes dans les 5 fichiers (`postgres`, `redis`, `wo
 ```yaml
 containers:
   - name: postgres
-    image: postgres:18-alpine
+    image: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     ports:
       - name: postgres
         containerPort: 5432
 ```
 
 - `containers` : une liste, car un pod peut avoir plusieurs conteneurs. Ici, un seul.
-- `image: postgres:18-alpine` : l'image officielle, en version Alpine (plus légère). C'est la même que dans `docker-compose.yml`. Pas de passage par `images` dans la kustomization : c'est une image publique.
+- `image` : l'image officielle de PostgreSQL 18.6, en version Alpine (plus légère), la même que dans `docker-compose.yml`. Pas de passage par `images` dans la kustomization : c'est une image publique.
+  - **`@sha256:…` fige l'image** : un tag comme `18-alpine` bouge à chaque nouvelle version, donc un nouveau nœud (à chaque `az aks start`) pourrait tirer une autre version sans aucun commit. Avec le digest, chaque nœud tire exactement la même image.
+  - Dependabot propose les nouvelles versions mineures par PR ; jamais la 19 : changer de version majeure demande un `pg_upgrade` des données.
+  - Mettre à jour l'image redémarre Postgres (1 seul pod) : mesuré, Result coupé 49 s, Poll 0 erreur, votes conservés.
 - `containerPort: 5432` : **documente** le port écouté et lui donne un nom (`postgres`), réutilisé par `targetPort` du Service. Ça n'ouvre et ne ferme aucun port : Postgres écoute sur 5432 de toute façon.
 
 ### Les variables d'environnement
@@ -535,9 +539,22 @@ volumeClaimTemplates:
 
 1. Le StatefulSet crée la PVC `data-postgres-0`, puis AKS crée le disque Azure.
 2. Le pod `postgres-0` démarre sur un nœud, et le disque y est rattaché.
-3. **Disque vide** : `initdb` crée la base avec les 3 variables, puis exécute `schema.sql` (création de la table `votes`).
+3. **Disque vide** : `initdb` crée la base avec les 3 variables, puis exécute `schema.sql` (création de la table `votes`) et `users.sh` (les utilisateurs des apps, ci-dessous).
 4. **Disque déjà rempli** : « Skipping initialization », et la base repart avec ses données.
 5. `pg_isready` répond, le pod devient ready, et le Service `postgres` route vers lui.
+
+### Un utilisateur par app, avec le minimum de droits (#109)
+
+| Utilisateur     | Qui                     | Droits sur `votes`           |
+| --------------- | ----------------------- | ---------------------------- |
+| `postgres`      | la base elle-même, nous | tout (superutilisateur)      |
+| `result_reader` | Result                  | `SELECT`                     |
+| `worker_writer` | le worker               | `SELECT`, `INSERT`, `UPDATE` |
+
+- Le worker fait un upsert (`INSERT … ON CONFLICT (id) DO UPDATE`). PostgreSQL exige `SELECT` sur les colonnes que `ON CONFLICT` lit, d'où le `SELECT`.
+- Ni `DELETE`, ni `TRUNCATE`, ni `DROP`, ni `CREATE` : mesuré sur AKS, Result reçoit `permission denied for table votes`, et `DROP TABLE` répond `must be owner of table votes`.
+- Les apps ne connaissent plus le mot de passe de `postgres`. Chacune reçoit le sien (`RESULT_DB_PASSWORD`, `WORKER_DB_PASSWORD` dans `secrets.env`).
+- `k8s/users.sh` crée ou met à jour les 2 utilisateurs. Il tourne au premier démarrage (base vide), puis `scripts/deploy.sh` le relance à chaque déploiement via `kubectl exec postgres-0`. Une base existante reçoit donc les utilisateurs, et un mot de passe changé est appliqué. `psql` lit les mots de passe dans l'environnement (`\getenv`) : ils n'apparaissent dans aucune ligne de commande.
 
 ### Questions probables
 
@@ -586,6 +603,7 @@ spec:
       maxSurge: 1
       maxUnavailable: 0
   minReadySeconds: 5
+  progressDeadlineSeconds: 120
 ```
 
 - `kind: Deployment` : des pods interchangeables, ce qui convient puisque Redis n'a pas de disque.
@@ -595,6 +613,7 @@ spec:
   - `maxSurge: 1` : 1 pod de plus que `replicas` est autorisé pendant la mise à jour ;
   - `maxUnavailable: 0` : jamais moins de `replicas` pods disponibles.
 - `minReadySeconds: 5` : un nouveau pod doit rester ready **5 s** avant d'être compté comme disponible. Ça évite de valider un pod qui serait ready une seconde, puis planterait.
+- `progressDeadlineSeconds: 120` : si aucun nouveau pod ne devient ready pendant **2 min**, le rollout est marqué en échec (défaut : 10 min). Kubernetes ne fait que le signaler ; les anciens pods continuent de servir (partie 9.2 bis).
 
 Pour Redis, ça veut dire : le nouveau pod démarre, devient ready, puis l'ancien s'arrête. Poll ne perd jamais Redis pendant une mise à jour.
 
@@ -615,7 +634,7 @@ L'uid 999 et le gid 1000 sont ceux de l'utilisateur `redis` dans l'image Alpine 
 ### La commande de démarrage
 
 ```yaml
-image: redis:8-alpine
+image: redis:8.10-alpine@sha256:47b08295737773de3b711fb86f13ae802f5074e96a9a2d29f5f80164ac08c046
 command:
   - sh
   - -c
@@ -737,15 +756,17 @@ envFrom:
 
 ```yaml
 env:
+  - name: POSTGRES_USER
+    value: worker_writer
   - name: POSTGRES_PASSWORD
     valueFrom:
-      secretKeyRef: { name: app-secrets, key: POSTGRES_PASSWORD }
+      secretKeyRef: { name: app-secrets, key: WORKER_DB_PASSWORD }
   - name: REDIS_PASSWORD
     valueFrom:
       secretKeyRef: { name: app-secrets, key: REDIS_PASSWORD, optional: true }
 ```
 
-Les 2 mots de passe, pris un par un dans le Secret. Celui de Redis est optionnel.
+Les 2 mots de passe, pris un par un dans le Secret. Celui de Redis est optionnel. `POSTGRES_USER` déclaré dans `env` **l'emporte** sur celui d'`envFrom` : le worker se connecte en `worker_writer`, pas en `postgres` (partie 4).
 
 ### Les probes HTTP
 
@@ -1040,12 +1061,14 @@ envFrom:
   - configMapRef:
       name: app-config
 env:
+  - name: POSTGRES_USER
+    value: result_reader
   - name: POSTGRES_PASSWORD
     valueFrom:
-      secretKeyRef: { name: app-secrets, key: POSTGRES_PASSWORD }
+      secretKeyRef: { name: app-secrets, key: RESULT_DB_PASSWORD }
 ```
 
-Result lit Postgres. Il reçoit `REDIS_HOST` via `envFrom`, sans s'en servir.
+Result lit Postgres, en `result_reader` : il peut seulement lire les votes (partie 4). Il reçoit `REDIS_HOST` via `envFrom`, sans s'en servir.
 
 ### L'utilisateur
 
@@ -1306,7 +1329,7 @@ Pour chaque scénario : ce que fait Kubernetes, ce que voit l'utilisateur, et ce
 ### 9.1 Premier déploiement sur un cluster neuf
 
 ```bash
-cp k8s/secrets.env.example k8s/secrets.env   # puis remplir POSTGRES_PASSWORD
+cp k8s/secrets.env.example k8s/secrets.env   # puis remplir les 3 mots de passe
 REGISTRY=<nom>.azurecr.io scripts/deploy.sh  # build, push, déploiement, attente, URL publiques
 kubectl -n bernstein get pods -w             # dans un autre terminal, pour suivre le démarrage
 ```
@@ -1316,7 +1339,7 @@ kubectl -n bernstein get pods -w             # dans un autre terminal, pour suiv
 3. Postgres attend son disque (quelques dizaines de secondes), puis initialise la base et la table `votes`.
 4. Pendant ce temps, le worker affiche `Waiting for db` et Result réessaie : leur readiness est rouge.
 5. Dès que Postgres et Redis répondent, tout passe au vert : `7/7` pods `Running` et `1/1` ou `2/2` ready.
-6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur. **Mesuré (#39)** : depuis un clone neuf et un namespace vide, l'app est en ligne en 1 min 29 s, images déjà en cache dans Docker :
+6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur. **Mesuré** : depuis un clone neuf et un namespace vide, l'app est en ligne en 1 min 29 s avec les images déjà en cache dans Docker (#39), et en 2 min 11 s depuis un clone du miroir Epitech, images de base à télécharger (#100) :
 
 ```bash
 kubectl -n bernstein get svc poll result   # colonne EXTERNAL-IP
@@ -1328,10 +1351,10 @@ C'est **le** test noté. Par exemple, on change la couleur dans Poll :
 
 ```bash
 # après la modification du code, commitée ou non (le tag devient alors <sha>-dirty-<date>)
-REGISTRY=<nom>.azurecr.io tests/zero-downtime.sh -- scripts/deploy.sh
+REGISTRY=<nom>.azurecr.io tests/zero-downtime.sh --from both -- scripts/deploy.sh
 ```
 
-Le tag change, donc le Pod template change, donc le Deployment crée un **nouveau ReplicaSet**. Avec `replicas: 2`, `maxSurge: 1` et `maxUnavailable: 0` :
+Le tag de Poll change, donc son Pod template change, donc le Deployment crée un **nouveau ReplicaSet**. Result et le worker gardent leur tag : `unchanged`, ils ne redémarrent pas, et le script ne les reconstruit pas (mesuré : 34 s au lieu de 52 s, 0 erreur). Avec `replicas: 2`, `maxSurge: 1` et `maxUnavailable: 0` :
 
 ```
 t0  ancien ReplicaSet : 2 pods (servent)      nouveau : 0
@@ -1352,13 +1375,41 @@ Chaque ancien pod passe d'abord **5 s en `preStop`** : il sort des endpoints tou
 
 **Piège** : lancer le test depuis la machine qui pousse les images fausse la mesure si le push est gros. Au premier déploiement (3 images neuves), l'upload a saturé la connexion : 2 timeouts pendant le push, aucun pendant le rollout. Une modification de code ne pousse qu'une petite couche, donc pas de souci en soutenance.
 
+**Autre piège, mesuré (#100)** : une connexion domestique faible perd des connexions même sans déploiement (0,2 à 1,6 % de timeouts au repos), alors qu'une sonde dans le cluster ne voyait aucune erreur sur 11 500 requêtes. Toujours lancer d'abord `DURATION=60 tests/zero-downtime.sh` sans rien déployer : il doit passer. Et lancer le test noté avec `--from both` : les mêmes requêtes partent aussi d'un pod dans le cluster (lignes `poll@cluster`, `result@cluster`). Une erreur vue seulement depuis la machine vient du réseau ou du load balancer Azure, pas des pods (#107).
+
+### 9.2 bis Une mise à jour cassée (la nouvelle version ne démarre pas)
+
+Rien ne coupe. Avec `maxUnavailable: 0`, Kubernetes n'arrête un ancien pod qu'une fois un nouveau ready. Le nouveau ne l'est jamais : les 2 anciens pods continuent de servir, et le pod cassé ne reçoit aucun trafic (il n'est pas dans les endpoints du Service).
+
+```
+t0       ancien : 2 pods (servent)     nouveau : 1 pod, jamais ready
+…        rien ne bouge, le rollout attend
+t0+2 min progressDeadlineSeconds dépassé → Progressing=False, reason ProgressDeadlineExceeded
+```
+
+Testé sur AKS (#108) avec Poll, et une sonde dans le cluster qui interroge Poll et Result en boucle : **0 erreur** dans les 3 cas.
+
+| Panne                          | Statut du nouveau pod | Pourquoi                                          |
+| ------------------------------ | --------------------- | ------------------------------------------------- |
+| tag d'image qui n'existe pas   | `ImagePullBackOff`    | le nœud ne trouve pas l'image                     |
+| le conteneur sort au démarrage | `CrashLoopBackOff`    | relancé avec un délai croissant (4 fois en 100 s) |
+| Poll ne joint pas Redis        | `Running`, `0/1`      | la readiness (`/readyz`) échoue                   |
+
+- **`progressDeadlineSeconds: 120`** : après 2 min sans progrès, Kubernetes marque le rollout en échec. Le défaut est 600 s. Nos pods démarrent en 1 à 13 s, plus ~20 s de pull d'image au pire : 2 min laisse de la marge.
+- Kubernetes **ne fait rien d'autre** : il signale, il ne revient pas en arrière ([doc Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#failed-deployment)). Si le pod finit par devenir ready, le rollout se termine.
+- `kubectl rollout status` sort alors en erreur (`exceeded its progress deadline`). `scripts/deploy.sh` s'arrête, nomme le Deployment et affiche les commandes de retour arrière.
+- **Pas de rollback automatique dans le script non plus** : les anciens pods servent, rien ne presse. On lit d'abord la cause (`describe` du nouveau pod), puis on choisit : corriger et redéployer, `rollout undo`, ou `POLL_TAG=<bon tag>` ([ADR 0017](../adr/0017-deploy-script.md)).
+- Un tag donné (`TAG`, `POLL_TAG`…) n'est jamais construit : le script vérifie d'abord qu'il existe dans le registry. Un tag mal tapé s'arrête avant tout changement.
+
+**Mesuré** : Poll cassé déployé avec `scripts/deploy.sh` : échec après 2 min, avec le message. Puis `TAG=<tag précédent>` : Poll revenu en ~16 s, pod cassé supprimé. 0 erreur dans le cluster.
+
 ### 9.3 Changement de config ou de mot de passe
 
-On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on redéploie sans rebuild : `REGISTRY=<nom>.azurecr.io TAG=<tag actuel> scripts/deploy.sh`. Le tag actuel se lit avec `kubectl -n bernstein get deploy poll -o jsonpath='{..image}'`. `kubectl apply -k k8s/` seul remettrait des images sans registry.
+On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on relance `REGISTRY=<nom>.azurecr.io scripts/deploy.sh` : le code n'a pas changé, donc les images existent déjà et rien n'est reconstruit. Les tags en cours se lisent avec `kubectl -n bernstein get deploy -o wide`. `kubectl apply -k k8s/` seul remettrait des images sans registry.
 
 - Le **hash** du ConfigMap ou du Secret change, donc son nom change. Les Pod templates qui le référencent changent aussi, et **tous les consommateurs** font un rolling update.
 - Pour `app-config` : poll, worker, result, **et postgres** (il lit `POSTGRES_DB` et `POSTGRES_USER`). Postgres a 1 seul pod, donc il est arrêté puis recréé : une coupure courte de la base.
-- **Attention au mot de passe Postgres** : il n'est lu qu'à la **création** de la base. Le changer dans `secrets.env` ne change **pas** le mot de passe de la base existante. Les apps enverraient alors le nouveau, et seraient refusées. Il faut aussi le changer dans Postgres (`ALTER USER postgres PASSWORD '…'`).
+- **Attention au mot de passe Postgres** : il n'est lu qu'à la **création** de la base. Le changer dans `secrets.env` ne change **pas** le mot de passe de la base existante. Les apps enverraient alors le nouveau, et seraient refusées. Il faut aussi le changer dans Postgres (`ALTER USER postgres PASSWORD '…'`). Les mots de passe de `result_reader` et `worker_writer`, eux, peuvent changer : chaque `deploy.sh` les applique.
 - Les anciens ConfigMaps et Secrets (avec l'ancien hash) restent dans le cluster. C'est sans effet, mais on peut les supprimer à la main.
 
 ### 9.4 Un pod plante ou est supprimé
@@ -1429,7 +1480,9 @@ kubectl -n bernstein scale deploy/result --replicas=4
 - `stop` : les VM sont arrêtées (plus de facturation du calcul). Les objets Kubernetes, la PVC et le disque sont **conservés**.
 - `start` : les nœuds sont **nouveaux** (noms différents), et tous les pods sont recréés. Postgres retrouve son disque et ses votes.
 - L'adresse du serveur API peut changer : il faut refaire `az aks get-credentials`.
+- **Les pods ne sont plus répartis** : le premier nœud prêt les prend tous (vu à chaque `start` vérifié, 5 fois sur 5 : les 7 pods sur un nœud). L'anti-affinity place les pods mais ne les déplace jamais ([ADR 0013](../adr/0013-pod-anti-affinity.md)). Vérifier avec `kubectl -n bernstein get pods -l 'app.kubernetes.io/name in (poll,result)' -o wide`, puis répartir avec un `rollout restart` de Poll et Result sous `tests/zero-downtime.sh --from both` ([`DEPLOY.md`](../../DEPLOY.md#after-az-aks-start)). Mesuré le 28/10 : un pod de chaque app par nœud, 0 erreur.
 - Le disque Azure reste facturé même cluster arrêté (quelques centimes par mois pour 1 Gi).
+- **Coût mesuré** (Cost Management, [ADR 0001](../adr/0001-aks-cluster.md#cost)) : **0,47 € par jour arrêté**, plus **environ 0,2 € par heure allumé** (les nœuds et leurs disques OS). Arrêté, restent facturés les 3 IP publiques (0,32 €/jour), le registry (0,15 €) et le disque Postgres. Le load balancer est gratuit dans l'offre étudiante. Les disques OS partent avec les nœuds : aucun coût de disque OS les jours arrêtés.
 - Les Services `poll` et `result` existent toujours, et leurs IP publiques sont **conservées** : vérifié à chaque `start` sur notre cluster, sans garantie écrite de Microsoft. Azure les range dans le groupe de ressources du cluster (`MC_…`), où nos comptes n'ont pas le droit de lecture. En revanche, supprimer le namespace libère les IP : le déploiement suivant en reçoit de nouvelles (vu dans #39).
 
 **Et si AKS met à jour les nœuds pendant la démo ?** Une mise à jour d'image recrée les nœuds un par un, comme un drain : Redis et Postgres changent de nœud, et Result tombe environ 40 s (mesuré pendant le passage à Cilium). Pour l'éviter, AKS ne peut lancer ces mises à jour que le dimanche de 03:00 à 07:00 (fenêtres de maintenance `aksManagedNodeOSUpgradeSchedule` et `default`). Le cluster est arrêté à cette heure-là, donc rien ne part pendant qu'on travaille. Quelques jours avant la soutenance, on applique à la main la dernière image, si elle est plus récente (`az aks nodepool get-upgrades`, [guide de setup](../setup/cluster-setup.md#control-when-aks-updates-the-nodes)). Limite : Microsoft peut ignorer la fenêtre pour une maintenance urgente.

@@ -29,6 +29,9 @@ spec:
       maxSurge: 1
       maxUnavailable: 0
   minReadySeconds: 5
+  # A rollout with no new Ready pod for 2 min fails (ProgressDeadlineExceeded) instead of waiting
+  # 10 min; the old pods keep serving meanwhile. Pods start in 1 to 13 s, plus up to ~20 s of image pull.
+  progressDeadlineSeconds: 120
   selector:
     matchLabels:
       app.kubernetes.io/name: redis
@@ -50,7 +53,8 @@ spec:
         fsGroup: 1000
       containers:
         - name: redis
-          image: redis:8-alpine
+          # Redis 8.10.3, pinned by digest: a new node pulls this exact image. Dependabot proposes updates.
+          image: redis:8.10-alpine@sha256:47b08295737773de3b711fb86f13ae802f5074e96a9a2d29f5f80164ac08c046
           command:
             - sh
             - -c
