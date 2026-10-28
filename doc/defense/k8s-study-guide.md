@@ -1414,13 +1414,13 @@ On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on relance `
 
 ### 9.4 Un pod plante ou est supprimé
 
-| Pod supprimé | Qui le recrée          | Délai mesuré                                     | Effet visible                                                                               |
-| ------------ | ---------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| 1 pod poll   | ReplicaSet             | quelques s                                       | Aucun : l'autre pod sert                                                                    |
-| 1 pod result | ReplicaSet             | quelques s                                       | Les WebSockets de ce pod se reconnectent à l'autre                                          |
-| worker       | ReplicaSet             | quelques s                                       | Les votes attendent dans Redis, puis sont traités                                           |
-| redis        | ReplicaSet             | ~4 s                                             | **Poll indisponible** pendant ce temps (sa readiness dépend de Redis). Votes en file perdus |
-| postgres-0   | StatefulSet (même nom) | secondes à 1 min (plus long s'il change de nœud) | Result indisponible, le worker attend. **Données conservées** (même disque)                 |
+| Pod supprimé | Qui le recrée          | Délai mesuré                                                 | Effet visible                                                                                                                                                        |
+| ------------ | ---------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 pod poll   | ReplicaSet             | quelques s                                                   | Aucun : l'autre pod sert                                                                                                                                             |
+| 1 pod result | ReplicaSet             | quelques s                                                   | Les WebSockets de ce pod se reconnectent à l'autre                                                                                                                   |
+| worker       | ReplicaSet             | quelques s                                                   | Les votes attendent dans Redis, puis sont traités                                                                                                                    |
+| redis        | ReplicaSet             | ~4 s                                                         | **Poll indisponible** pendant ce temps (sa readiness dépend de Redis). Votes en file perdus                                                                          |
+| postgres-0   | StatefulSet (même nom) | 8 s sur le même nœud, 27 s s'il change de nœud (mesuré, #96) | Result indisponible 13 à 43 s : ses 2 pods redémarrent une fois (`server.js` s'arrête quand il perd la base). Le worker attend. **Données conservées** (même disque) |
 
 Un conteneur qui **plante** (process qui s'arrête) est redémarré sur place par le kubelet, dans le même pod : la colonne `RESTARTS` augmente. S'il plante en boucle, l'attente entre deux redémarrages augmente (`CrashLoopBackOff`, jusqu'à 5 minutes).
 
@@ -1453,13 +1453,15 @@ Pour remettre le nœud en service : `kubectl uncordon <nœud>`. Les pods ne revi
 
 ### 9.6 Une dépendance tombe
 
-| Composant en panne | Poll                                        | Worker                               | Result                       |
-| ------------------ | ------------------------------------------- | ------------------------------------ | ---------------------------- |
-| **Redis**          | Non ready, page indisponible                | Erreur, il redémarre et attend Redis | Fonctionne (scores figés)    |
-| **Postgres**       | Fonctionne, les votes s'empilent dans Redis | Non ready, attend la base            | Non ready, page indisponible |
-| **Worker**         | Fonctionne                                  | —                                    | Fonctionne (scores figés)    |
+| Composant en panne | Poll                                        | Worker                               | Result                                                 |
+| ------------------ | ------------------------------------------- | ------------------------------------ | ------------------------------------------------------ |
+| **Redis**          | Non ready, page indisponible                | Erreur, il redémarre et attend Redis | Fonctionne (scores figés)                              |
+| **Postgres**       | Fonctionne, les votes s'empilent dans Redis | Non ready, attend la base            | Redémarre une fois, puis non ready : page indisponible |
+| **Worker**         | Fonctionne                                  | —                                    | Fonctionne (scores figés)                              |
 
 Après un redémarrage de Postgres, le worker est redémarré par sa liveness et redevient ready en environ 1 minute, sans intervention (partie 6). Aucun vote n'est perdu.
+
+Result, lui, **s'arrête tout seul** dès qu'il perd la base : `server.js` fait `process.exit(1)` (log : `Db connection error: error: terminating connection due to administrator command`), puis Kubernetes le redémarre et il attend la base. Donc `RESTARTS` passe à 1 sur ses 2 pods : c'est normal. Attention au délai de redémarrage du kubelet (10 s, 20 s, 40 s… jusqu'à 5 min) : plusieurs redémarrages de Postgres en quelques minutes peuvent laisser Result coupé plus longtemps que Postgres ([ADR 0008](../adr/0008-result-deployment.md)).
 
 ### 9.7 Monter en charge (scale)
 
