@@ -212,6 +212,17 @@ az aks stop  -g <resource-group> -n <cluster>   # nodes off, compute not billed
 az aks start -g <resource-group> -n <cluster>   # nodes on: the app starts again by itself
 ```
 
+### After `az aks start`
+
+The first node to be ready gets every pod: after each start we checked (5 out of 5, last on 2026-10-28), all 7 pods ran on one node. The anti-affinity places pods but never moves them ([ADR 0013](doc/adr/0013-pod-anti-affinity.md)), so losing or draining that node would take Poll and Result down together. Check the `NODE` column, then restart Poll and Result to spread them:
+
+```bash
+kubectl -n bernstein get pods -l 'app.kubernetes.io/name in (poll,result)' -o wide
+tests/zero-downtime.sh --from both -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll && kubectl -n bernstein rollout status deploy/result'
+```
+
+Measured on 2026-10-28: before, the 2 Poll and 2 Result pods on one node; after, one of each per node, with 0 errors in 1280 requests from the client and 2765 from inside the cluster.
+
 Delete the app only, and keep the cluster and the registry:
 
 ```bash
