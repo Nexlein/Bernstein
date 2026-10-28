@@ -1,6 +1,6 @@
 # ADR 0025: NetworkPolicies, enforced by Cilium
 
-**Status:** Accepted · **Date:** 2026-10-27 · **Issues:** #34
+**Status:** Accepted · **Date:** 2026-10-27 · **Issues:** #34, #99
 
 ## Decision
 
@@ -32,7 +32,7 @@
 
   The single replicas of Redis and PostgreSQL cause this, as in any node upgrade ([ADR 0007](0007-postgres-statefulset.md), [ADR 0009](0009-redis-queue.md)). Microsoft documents no way back to the previous dataplane.
 
-- **The evaluator's cluster needs an engine too.** Without one, the policies are ignored and the app still works. `DEPLOY.md` lists the check in its prerequisites.
+- **The evaluator's cluster needs an engine too.** Without one, the policies are ignored and the app still works. `DEPLOY.md` lists the check in its prerequisites, and `scripts/deploy.sh` prints a `WARNING` at the start and the end when no DaemonSet `cilium`, `calico-node` or `azure-npm` runs in the cluster (#99). A warning, not an error: the app works; only the isolation is missing. It looks in every namespace, as AKS runs Calico in `calico-system`. Checked on AKS: Cilium found, no warning.
 - **A new app or dependency is blocked by default:** it needs its own allow rule, or its connections time out.
 - **Cilium runs without requests or limits.** **Fact:** AKS does not configure CPU or memory limits on the Cilium daemonset. ([same page](https://learn.microsoft.com/en-us/azure/aks/azure-cni-powered-by-cilium)) Measured: 13-15m CPU and 121-131Mi per node for the agent, 1-3m and 27-43Mi for each of the 2 operator pods. The scheduler does not count them. `kube-proxy` is gone, so the CPU requests of both nodes went from 1712m to 1662m ([ADR 0018](0018-resource-requests-and-limits.md)).
 - `kubectl exec` (backups, `redis-cli`) and `port-forward` are not filtered: they do not use the pod network.
