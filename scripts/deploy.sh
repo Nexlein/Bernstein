@@ -132,6 +132,15 @@ if [ "$build" -eq 1 ]; then
   done
 else
   echo "TAG is set: deploying the existing $TAG images, nothing is built or pushed."
+  # A mistyped tag would leave the new pods in ImagePullBackOff: check the images first.
+  case $REGISTRY in
+    *.azurecr.io)
+      for app in $APPS; do
+        az acr repository show --name "${REGISTRY%%.*}" --image "$app:$TAG" -o none 2>/dev/null ||
+          die "$REGISTRY/$app:$TAG not found. List the tags: az acr repository show-tags --name ${REGISTRY%%.*} --repository $app --orderby time_desc -o table"
+      done
+      ;;
+  esac
 fi
 
 # --- Deploy and wait -----------------------------------------------------------------
@@ -139,8 +148,22 @@ step "Applying the manifests"
 kubectl apply -k .deploy
 
 step "Waiting for the rollouts"
-kubectl -n "$NAMESPACE" rollout status --timeout=5m \
-  statefulset/postgres deployment/redis deployment/worker deployment/poll deployment/result
+# A Deployment whose new pods never get Ready fails after progressDeadlineSeconds (2 min).
+# Its old pods keep serving: nothing is rolled back automatically, the operator decides.
+failed=""
+for resource in statefulset/postgres deployment/redis deployment/worker deployment/poll deployment/result; do
+  kubectl -n "$NAMESPACE" rollout status --timeout=5m "$resource" || failed="$failed $resource"
+done
+if [ -n "$failed" ]; then
+  echo >&2
+  echo "ERROR: rollout not finished:$failed. The previous pods keep serving." >&2
+  echo "  Why:       kubectl -n $NAMESPACE get pods, then describe the new pod (DEPLOY.md, Debug a broken pod)" >&2
+  for resource in $failed; do
+    echo "  Roll back: kubectl -n $NAMESPACE rollout undo $resource" >&2
+  done
+  echo "  Or redeploy a good tag: REGISTRY=$REGISTRY TAG=<good tag> scripts/deploy.sh" >&2
+  exit 1
+fi
 
 # A new LoadBalancer Service takes a minute or two to get its public IP.
 step "Waiting for the public IPs"
