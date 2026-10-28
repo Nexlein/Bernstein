@@ -25,23 +25,23 @@ AKS cluster `bernstein-aks`, Free tier, in `spaincentral`, with **2 `Standard_B2
 
 ## Cost
 
-**Estimate, 2026-10-28:** Azure list prices in EUR ([Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices)) for what we run. Not yet the bill: our accounts read the costs of `bernstein-rg` only, and the VMs, disks, IPs and load balancer are billed in the cluster's node resource group (`MC_…`).
+**Measured** in Azure Cost Management, on the subscription (read-only role `Cost Management Reader`): **5.66 €** from 2026-10-19, when the cluster was created, to 2026-10-28 08:00 UTC (the data lags a few hours).
 
-| Resource                                                                                  | List price         | Per day, running | Per day, stopped |
-| ----------------------------------------------------------------------------------------- | ------------------ | ---------------- | ---------------- |
-| 2 nodes `Standard_B2s_v2`, `spaincentral`                                                 | 0.0803 €/h each    | 3.85 €           | 0                |
-| 2 node OS disks, Premium SSD P10 (128 GiB, the AKS default for 1 to 7 vCPUs)              | 19.08 €/month each | 1.25 €           | 0, most likely   |
-| PostgreSQL disk: 1 GiB on `managed-csi` (Standard SSD), billed as the smallest tier, E1   | 0.26 €/month       | 0.01 €           | 0.01 €           |
-| 3 Standard public IPs: Poll, Result, and the nodes' outbound IP                           | 0.0044 €/h each    | 0.32 €           | 0.32 €           |
-| Standard Load Balancer: 3 rules (Poll, Result, outbound), the first 5 billed as one block | 0.022 €/h          | 0.53 €           | 0.53 €           |
-| Container Registry Basic, `francecentral`                                                 | 0.1466 €/day       | 0.15 €           | 0.15 €           |
-| **Total**                                                                                 |                    | **about 6.1 €**  | **about 1.0 €**  |
+| Meter                                                                        | Cost   | Usage            | Billed while stopped                    |
+| ---------------------------------------------------------------------------- | ------ | ---------------- | --------------------------------------- |
+| 3 Standard public IPs: Poll, Result, and the nodes' outbound IP              | 2.50 € | 568 IP-hours     | yes, 0.32 € a day                       |
+| Container Registry Basic                                                     | 1.29 € | 8.8 days         | yes, 0.15 € a day                       |
+| 2 nodes `Standard_B2s_v2`                                                    | 1.01 € | 12.6 VM-hours    | no                                      |
+| 2 node OS disks, Premium SSD P10 (128 GiB, the AKS default for 1 to 7 vCPUs) | 0.78 € | about 30 hours   | no: deleted with the nodes on each stop |
+| PostgreSQL disk: 1 GiB on `managed-csi` (Standard SSD), billed as tier E1    | 0.07 € | the whole period | yes, 0.01 € a day                       |
+| Standard Load Balancer: rules and data processed                             | 0 €    | 209 h, 8 GB      | free (see below)                        |
+| Data transfer, and an IP of a first cluster attempt in `francecentral`       | 0.01 € |                  |                                         |
 
-- **Sources:** the default OS disk tier and the `managed-csi` class: [Microsoft Learn: AKS storage concepts](https://learn.microsoft.com/en-us/azure/aks/concepts-storage). The 3 outbound and service IPs: `az aks show` and our 2 `LoadBalancer` Services ([ADR 0004](0004-public-access-loadbalancer.md)). Data transfer is left out: a few MB per test.
-- **Stopped:** "most likely" because each `az aks start` gives new nodes (new names, empty image cache), so the OS disks seem to go with the old ones; Microsoft only writes that compute is not billed. The IPs, the load balancer rules, the PostgreSQL disk and the registry stay, so they keep billing: about 1.0 € a day, 2.3 € if the OS disks stay too.
-- **Spent so far, estimated:** about **11 €** from 2026-10-19 to 2026-10-28. The cluster ran 10.9 hours in total, from the `start` and `stop` events of the activity log (2.3 € of nodes and OS disks); the IPs, load balancer and registry billed the whole 9 days (about 9 €). The 1.32 € estimated for the registry matches what Azure shows for `bernstein-rg`: **1.26 €**, the only cost our accounts can read.
-- **Credit:** **Fact:** Azure for Students gives a $100 credit for 12 months; once it is used, the subscription's products are disabled. ([Azure for Students](https://azure.microsoft.com/en-us/free/students/)) At about 1 € a day stopped, plus about 0.21 € per hour running, reaching the defense (about 2026-11-04) adds about 9 €: 7 days, 10 hours of them running. About 20 € in total, if the credit served nothing else.
-- Stopping the cluster when idle divides the daily cost by 6. What stays billed (IPs and load balancer, 0.85 € a day) now costs more than the hours of use: deleting the namespace would save 2 IPs and 2 rules, but loses the votes and the IPs.
+- **Per day:** stopped, **0.47 €** (2026-10-22 to 2026-10-25, all four days the same: IPs 0.32, registry 0.15, PostgreSQL disk 0.01). Running adds the nodes and their OS disks, **about 0.2 € per hour**: 0.18 over the whole period, 0.24 on 2026-10-27. A full day running would cost about 5 €.
+- **The load balancer is free here:** its rules ran 209 hours at 0 €, and the subscription overview counts them among the student offer's free services (750 hours a month). The PostgreSQL disk and the OS disks follow list prices: P10 19.08 € and E1 0.26 € a month, nodes 0.0803 € an hour ([Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices); [Microsoft Learn: AKS storage concepts](https://learn.microsoft.com/en-us/azure/aks/concepts-storage) for the default disks).
+- **Stopping works:** no node or OS disk cost on the stopped days. What stays is mostly the 3 public IPs, two thirds of the stopped cost. Deleting the namespace would free 2 of them (0.21 € a day) but loses the votes and the IPs: not worth it.
+- **Credit:** **Fact:** Azure for Students gives a $100 credit for 12 months; once it is used, the subscription's products are disabled. ([Azure for Students](https://azure.microsoft.com/en-us/free/students/)) Our Education Hub shows **88 €**, valid until 2027-10-19. It still shows 88 € available and 0 € of October costs: it lags behind Cost Management. The portal forecasts 7.45 € for October.
+- **Until the defense** (about 2026-11-04): 7 more days, stopped except about 10 hours, add about 6 €. About **12 € in total, 14 % of the credit.**
 
 ## Alternatives rejected
 
@@ -54,4 +54,4 @@ AKS cluster `bernstein-aks`, Free tier, in `spaincentral`, with **2 `Standard_B2
 ## Revisit if
 
 - The Azure credits run out before the defense. The subscription owner sees the balance in the Azure Education Hub.
-- The real costs of the `MC_…` group (a `Cost Management Reader` role on the subscription, or the portal's Cost analysis) differ from the estimate above: replace it.
+- A cost appears that the table does not explain: Cost Management, Cost analysis, on the subscription, grouped by meter.
