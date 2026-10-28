@@ -18,6 +18,8 @@ resources:
   - worker.yaml
   - poll.yaml
   - pdb.yaml
+  - hpa.yaml
+  - network-policies.yaml
 
 # No registry or tag here: the manifests use the bare image names (poll, worker, result),
 # and scripts/deploy.sh sets the evaluator's registry and the git SHA tag in a generated

@@ -1,10 +1,10 @@
 # ADR 0009: Redis queue in memory, single replica
 
-**Status:** Accepted · **Date:** 2026-10-20 · **Issues:** #20
+**Status:** Accepted · **Date:** 2026-10-20 · **Issues:** #20, #35
 
 ## Decision
 
-`k8s/redis.yaml` runs `redis:8-alpine` as a `Deployment` with 1 replica and no PVC, behind a `ClusterIP` Service `redis` on port 6379. Persistence off (`--save '' --appendonly no`). `--requirepass "$REDIS_PASSWORD"` is added when `REDIS_PASSWORD` is set in `app-secrets`; empty means no authentication. Runs as the image's `redis` user (uid 999, gid 1000), all capabilities dropped. Baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`).
+`k8s/redis.yaml` runs `redis:8-alpine` as a `Deployment` with 1 replica and no PVC, behind a `ClusterIP` Service `redis` on port 6379. Persistence off (`--save '' --appendonly no`). Memory capped at `--maxmemory 100mb` with `noeviction` ([ADR 0018](0018-resource-requests-and-limits.md)). `--requirepass "$REDIS_PASSWORD"` is added when `REDIS_PASSWORD` is set in `app-secrets`; empty means no authentication. Runs as the image's `redis` user (uid 999, gid 1000), all capabilities dropped. Baseline rollout (`maxSurge: 1`, `maxUnavailable: 0`, `minReadySeconds: 5`).
 
 ## Why
 
@@ -18,6 +18,7 @@
 ## Trade-offs
 
 - **Votes can be lost:** if Redis crashes or is rescheduled while votes sit in the list (for instance while PostgreSQL or the worker is down), those votes are lost. Under normal operation the worker drains the queue in milliseconds.
+- **When the queue is full** (100 MB, after a long worker or PostgreSQL outage), Redis refuses new votes and Poll answers 500, instead of Redis being OOMKilled with every queued vote ([ADR 0018](0018-resource-requests-and-limits.md)).
 - **Single point of failure for Poll:** Poll's `/readyz` pings Redis, so while Redis is down every Poll pod is unready and the page is unreachable (Result keeps working). A Redis restart takes about 4 s (measured on AKS). Rollouts avoid the gap (the new pod is Ready before the old one stops); a node drain does not.
 - **During a Redis rollout**, both pods briefly sit behind the Service: Poll may push to the new pod while the worker still pops from the old one. Nothing is lost: when the old pod stops, the worker's connection fails, it exits, restarts and reconnects to the new pod, which holds those votes.
 

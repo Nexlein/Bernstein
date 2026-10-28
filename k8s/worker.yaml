@@ -22,7 +22,12 @@ spec:
       labels:
         app.kubernetes.io/name: worker
     spec:
+      # None of our pods calls the Kubernetes API: no service account token in the containers.
+      automountServiceAccountToken: false
       securityContext:
+        # Required by the "restricted" Pod Security Standard (namespace.yaml): the runtime's default syscall filter.
+        seccompProfile:
+          type: RuntimeDefault
         runAsNonRoot: true
         runAsUser: 10001
         sysctls:

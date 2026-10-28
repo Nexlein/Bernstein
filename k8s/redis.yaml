@@ -37,7 +37,12 @@ spec:
       labels:
         app.kubernetes.io/name: redis
     spec:
+      # None of our pods calls the Kubernetes API: no service account token in the containers.
+      automountServiceAccountToken: false
       securityContext:
+        # Required by the "restricted" Pod Security Standard (namespace.yaml): the runtime's default syscall filter.
+        seccompProfile:
+          type: RuntimeDefault
         # uid/gid of the "redis" user in redis:*-alpine.
         runAsUser: 999
         runAsGroup: 1000
@@ -50,11 +55,13 @@ spec:
             - sh
             - -c
             # --save '' --appendonly no: pure in-memory queue, no RDB/AOF files written in the container.
+            # --maxmemory 100mb, under the 128Mi limit, with noeviction: when full, Redis refuses new
+            # votes (Poll answers 500) instead of being OOMKilled with every queued vote. Reads still work.
             - |
               if [ -n "$REDIS_PASSWORD" ]; then
-                exec redis-server --save '' --appendonly no --requirepass "$REDIS_PASSWORD"
+                exec redis-server --save '' --appendonly no --maxmemory 100mb --maxmemory-policy noeviction --requirepass "$REDIS_PASSWORD"
               else
-                exec redis-server --save '' --appendonly no
+                exec redis-server --save '' --appendonly no --maxmemory 100mb --maxmemory-policy noeviction
               fi
           ports:
             - name: redis
@@ -86,5 +93,7 @@ spec:
               memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            # Nothing to write: no RDB/AOF files (--save '', --appendonly no).
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ['ALL']

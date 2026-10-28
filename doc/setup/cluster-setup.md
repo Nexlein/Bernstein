@@ -1,14 +1,18 @@
 # AKS Cluster + ACR Registry Setup
 
-Step-by-step guide to recreate the Bernstein Azure infrastructure from scratch.
+Step-by-step guide to create the Azure resources Bernstein runs on: a resource group, a private registry and an AKS cluster. Once they exist, deploy the app with [`DEPLOY.md`](../../DEPLOY.md).
 
-## Created resources
+## Names
 
-| Resource         | Name                | Details                                                         |
-| ---------------- | ------------------- | --------------------------------------------------------------- |
-| Resource group   | `bernstein-rg`      | Region `francecentral`                                          |
-| Private registry | `bernsteinacrmaeva` | ACR, `Basic` SKU (`francecentral`)                              |
-| K8s cluster      | `bernstein-aks`     | Region `spaincentral`, 2 nodes `standard_b2s_v2` (2 vCPU, 8 GB) |
+Set these variables once per shell; every command below uses them. The values are ours, as an example: replace them with your own.
+
+```bash
+RG=bernstein-rg             # resource group
+LOCATION=francecentral      # region of the resource group
+ACR=bernsteinacrmaeva       # registry name: globally unique, lowercase letters and digits only
+AKS=bernstein-aks           # cluster name
+AKS_LOCATION=spaincentral   # region of the cluster (see step 5), and of the registry
+```
 
 ---
 
@@ -67,7 +71,7 @@ az provider register --namespace Microsoft.ContainerRegistry
 Logical container for all project resources (lets you delete everything at once).
 
 ```bash
-az group create --name bernstein-rg --location francecentral
+az group create --name "$RG" --location "$LOCATION"
 ```
 
 ## 4. Create the private registry (ACR)
@@ -75,45 +79,74 @@ az group create --name bernstein-rg --location francecentral
 The name must be globally unique, lowercase letters and digits only.
 
 ```bash
-az acr create --resource-group bernstein-rg --name bernsteinacrmaeva --sku Basic
+az acr create --resource-group "$RG" --name "$ACR" --sku Basic --location "$AKS_LOCATION"
 ```
+
+Put the registry in the cluster's region: `az aks check-acr` warns that a registry in another region "may result in slow image pulls and extra cost". Ours predates this advice: it sits in `francecentral`, the cluster in `spaincentral`.
 
 ## 5. Create the AKS cluster (~5-10 min)
 
 ```bash
-az aks create --resource-group bernstein-rg --name bernstein-aks --location spaincentral --node-count 2 --node-vm-size standard_b2s_v2 --attach-acr bernsteinacrmaeva --no-ssh-key
+az aks create --resource-group "$RG" --name "$AKS" --location "$AKS_LOCATION" --node-count 2 --node-vm-size standard_b2s_v2 \
+  --network-plugin azure --network-plugin-mode overlay --network-dataplane cilium \
+  --attach-acr "$ACR" --no-ssh-key
 ```
 
-If the cluster already exists, do not rerun `create` with the same name. Either continue with step 6, or inspect/update the existing cluster with:
-
-```bash
-az aks show --resource-group bernstein-rg --name bernstein-aks -o table
-az aks update --resource-group bernstein-rg --name bernstein-aks
-```
-
-| Option                    | Why                                                                                                                    |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `--location spaincentral` | `francecentral` only allows `v7` SKUs on Azure for Students, which have `0` vCPU quota; `spaincentral` allows `Bsv2`   |
-| `--node-count 2`          | Spreads the 2 poll/result replicas across nodes; fits within the 6 regional / 10 family vCPU quota (`2 × 2 = 4` vCPUs) |
-| `--node-vm-size b2s_v2`   | 2 vCPU / 8 GB RAM (`Standard Bsv2 Family` has 10 vCPU quota in `spaincentral` on the student subscription)             |
-| `--attach-acr`            | Grants the cluster pull access to the ACR (no `imagePullSecret` needed)                                                |
-| `--no-ssh-key`            | No SSH needed on nodes; avoids the `~/.ssh/id_rsa` parsing error                                                       |
+| Option                                                        | Why                                                                                                                                                                    |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--location spaincentral`                                     | `francecentral` only allows `v7` SKUs on Azure for Students, which have `0` vCPU quota; `spaincentral` allows `Bsv2`                                                   |
+| `--node-count 2`                                              | Spreads the 2 poll/result replicas across nodes; fits within the 6 regional / 10 family vCPU quota (`2 × 2 = 4` vCPUs)                                                 |
+| `--node-vm-size b2s_v2`                                       | 2 vCPU / 8 GB RAM (`Standard Bsv2 Family` has 10 vCPU quota in `spaincentral` on the student subscription)                                                             |
+| `--network-plugin-mode overlay`, `--network-dataplane cilium` | Azure CNI Overlay with Cilium, which enforces the NetworkPolicies ([ADR 0025](../adr/0025-network-policies.md)). Ours was created without Cilium, then updated (below) |
+| `--attach-acr`                                                | Grants the cluster pull access to the ACR (no `imagePullSecret` needed)                                                                                                |
+| `--no-ssh-key`                                                | No SSH needed on nodes; avoids the `~/.ssh/id_rsa` parsing error                                                                                                       |
 
 Track progress:
 
 ```bash
-az aks show -g bernstein-rg -n bernstein-aks --query provisioningState -o tsv   # Creating -> Succeeded
+az aks show -g "$RG" -n "$AKS" --query provisioningState -o tsv   # Creating -> Succeeded
 ```
+
+### Already have a cluster? Attach the registry
+
+Do not rerun `az aks create` on an existing cluster. Give it pull access to the registry instead, then continue with step 6:
+
+```bash
+az aks show --resource-group "$RG" --name "$AKS" -o table
+az aks update --resource-group "$RG" --name "$AKS" --attach-acr "$ACR"
+```
+
+Attaching needs the Owner role (or equivalent) on the subscription, because it creates a role assignment ([ADR 0002](../adr/0002-acr-registry.md)).
+
+### Already have a cluster? Enable the network policy engine
+
+`az aks show -g "$RG" -n "$AKS" --query networkProfile.networkPolicy -o tsv` prints `none`: the NetworkPolicies of `k8s/` would be ignored. Switch an Azure CNI cluster to Cilium:
+
+```bash
+az aks update --resource-group "$RG" --name "$AKS" --network-dataplane cilium --network-policy cilium
+```
+
+Both options are needed: with `--network-dataplane cilium` alone, AKS answers `Cilium dataplane requires network policy cilium`. The nodes are reimaged one at a time, like an upgrade, and the policies are enforced once all of them are done. Microsoft documents no way back to the previous dataplane ([ADR 0025](../adr/0025-network-policies.md)). Measured on ours: about 12 minutes, Result down twice for about 40 s and Poll once, while Redis and PostgreSQL moved.
 
 ## 6. Connect kubectl to the cluster
 
 ```bash
-az aks get-credentials --resource-group bernstein-rg --name bernstein-aks --overwrite-existing
+az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
 kubectl get nodes          # 2 nodes "Ready"
 kubectl get nodes -w       # live watch (Ctrl+C to quit)
 ```
 
 `get-credentials` writes the config to `~/.kube/config`.
+
+Check that the cluster may pull from the registry: its kubelet identity must hold the `AcrPull` role on it.
+
+```bash
+KUBELET_ID=$(az aks show -g "$RG" -n "$AKS" --query identityProfile.kubeletidentity.objectId -o tsv)
+az role assignment list --assignee "$KUBELET_ID" --scope "$(az acr show -n "$ACR" --query id -o tsv)" \
+  --query "[].roleDefinitionName" -o tsv   # AcrPull
+```
+
+`az aks check-acr` runs more checks, but with az 2.91 it crashed on our cluster (`KeyError: 'serverVersion'`).
 
 ---
 
@@ -122,48 +155,33 @@ kubectl get nodes -w       # live watch (Ctrl+C to quit)
 `Contributor` role on the resource group. It covers ACR push/pull and `az aks get-credentials` (`kubectl` access), so no other role is needed:
 
 ```bash
-RG_ID=$(az group show --name bernstein-rg --query id -o tsv)
+RG_ID=$(az group show --name "$RG" --query id -o tsv)
 az role assignment create --assignee firstname.lastname@epitech.eu --role Contributor --scope "$RG_ID"
 ```
 
 For `kubectl` access only, without `Contributor`, assign `Azure Kubernetes Service Cluster User Role` on the cluster instead.
 
-On the teammate's side:
+On the teammate's side, with the same variables set:
 
 ```bash
 az login
 az account set --subscription "<owner's subscription>"
-az acr login --name bernsteinacrmaeva
-az aks get-credentials -g bernstein-rg -n bernstein-aks
+az acr login --name "$ACR"
+az aks get-credentials -g "$RG" -n "$AKS"
 ```
 
 > If `--assignee` returns "user not found": invite the teammate as a guest (Azure portal → Microsoft Entra ID → Users → Invite external user).
 
 ---
 
-## 8. Build & push images to the ACR
+## 8. Build, push and deploy
 
-Tag = short git SHA: a K8s rollout only triggers when the tag changes, and you always know which commit is running.
-
-```bash
-az acr login --name bernsteinacrmaeva
-TAG=$(git rev-parse --short HEAD)
-REG=bernsteinacrmaeva.azurecr.io
-for svc in poll result worker; do
-    docker build -t "$REG/$svc:$TAG" "poll-application/$svc"
-    docker push "$REG/$svc:$TAG"
-done
-az acr repository list --name bernsteinacrmaeva -o table
-az acr repository show-tags --name bernsteinacrmaeva --repository poll -o table
-```
-
-Verify the cluster can pull from the private ACR (via `--attach-acr`, no `imagePullSecret` needed):
+[`scripts/deploy.sh`](../../scripts/deploy.sh) builds the 3 images, tags them with the git SHA, pushes them to the registry and deploys the app. Credentials and details: [`DEPLOY.md`](../../DEPLOY.md).
 
 ```bash
-kubectl run test-pull --image="$REG/poll:$TAG" --restart=Never
-kubectl get pod test-pull
-kubectl describe pod test-pull | grep -E "Pulling|Pulled|Started"
-kubectl delete pod test-pull
+REGISTRY="$ACR.azurecr.io" scripts/deploy.sh
+az acr repository list --name "$ACR" -o table                          # what the registry holds
+az acr repository show-tags --name "$ACR" --repository poll -o table   # tags of one image
 ```
 
 ### (Optional) Push from GitHub CI
@@ -187,13 +205,9 @@ Add in GitHub → Settings → Secrets and variables → Actions:
 
 ---
 
-## 9. Cost management
+## 9. Stop or delete (cost)
 
-```bash
-az aks stop  --resource-group bernstein-rg --name bernstein-aks   # shut down the nodes
-az aks start --resource-group bernstein-rg --name bernstein-aks   # start them again
-az group delete --name bernstein-rg --yes                         # delete EVERYTHING (end of project)
-```
+Stop the nodes when idle, delete the app or everything after the defense: [`DEPLOY.md`](../../DEPLOY.md#6-stop-or-delete-cost).
 
 ---
 
@@ -211,5 +225,5 @@ az group delete --name bernstein-rg --yes                         # delete EVERY
 Check your quota:
 
 ```bash
-az vm list-usage --location spaincentral -o table | awk '$NF > 0 && /vCPU/'
+az vm list-usage --location "$AKS_LOCATION" -o table | awk '$NF > 0 && /vCPU/'
 ```

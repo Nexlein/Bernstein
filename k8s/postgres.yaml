@@ -31,7 +31,12 @@ spec:
       labels:
         app.kubernetes.io/name: postgres
     spec:
+      # None of our pods calls the Kubernetes API: no service account token in the containers.
+      automountServiceAccountToken: false
       securityContext:
+        # Required by the "restricted" Pod Security Standard (namespace.yaml): the runtime's default syscall filter.
+        seccompProfile:
+          type: RuntimeDefault
         # uid/gid of the "postgres" user in postgres:*-alpine; fsGroup makes the disk writable for it.
         runAsUser: 70
         runAsGroup: 70
@@ -80,6 +85,7 @@ spec:
               memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ['ALL']
           volumeMounts:
@@ -90,10 +96,22 @@ spec:
             - name: init
               mountPath: /docker-entrypoint-initdb.d
               readOnly: true
+            # Read-only root filesystem: PostgreSQL writes its socket and lock file here, and temp files in /tmp.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: init
           configMap:
             name: postgres-init
+        - name: run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
   volumeClaimTemplates:
     - metadata:
         name: data

@@ -2,23 +2,27 @@
 
 Support de révision : ce que le déploiement (`scripts/deploy.sh`, qui applique `k8s/`) crée, comment les pièces s'emboîtent, et l'explication de **chaque ligne** des fichiers de `k8s/`. Les justifications des choix (pourquoi ceci plutôt que cela) sont dans les [ADR](../adr/README.md) (un fichier par choix) ; ce guide explique le **comment**.
 
+Pour répondre vite en soutenance (drain, pod tué, limites, autoscaling, sauvegarde, réseau, sécurité des pods) : l'[antisèche](cheatsheet.md), avec les commandes à montrer en direct.
+
 Méthode conseillée : lire une partie, puis fermer le guide et réexpliquer le fichier à voix haute, ligne par ligne. Chaque partie se termine par des questions probables en soutenance.
 
 Avancement :
 
-| Partie | Fichier                           | État |
-| ------ | --------------------------------- | ---- |
-| 0      | Vocabulaire                       | fait |
-| 1      | Ce qui est créé dans le cluster   | fait |
-| 2      | `kustomization.yaml`              | fait |
-| 3      | `namespace.yaml`                  | fait |
-| 4      | `postgres.yaml` (+ `schema.sql`)  | fait |
-| 5      | `redis.yaml`                      | fait |
-| 6      | `worker.yaml`                     | fait |
-| 7      | `poll.yaml`                       | fait |
-| 8      | `result.yaml`                     | fait |
-| 8 bis  | `pdb.yaml`                        | fait |
-| 9      | Scénarios (rollout, drain, panne) | fait |
+| Partie   | Fichier                           | État |
+| -------- | --------------------------------- | ---- |
+| 0        | Vocabulaire                       | fait |
+| 1        | Ce qui est créé dans le cluster   | fait |
+| 2        | `kustomization.yaml`              | fait |
+| 3        | `namespace.yaml`                  | fait |
+| 4        | `postgres.yaml` (+ `schema.sql`)  | fait |
+| 5        | `redis.yaml`                      | fait |
+| 6        | `worker.yaml`                     | fait |
+| 7        | `poll.yaml`                       | fait |
+| 8        | `result.yaml`                     | fait |
+| 8 bis    | `pdb.yaml`                        | fait |
+| 8 ter    | `network-policies.yaml`           | fait |
+| 8 quater | `hpa.yaml`                        | fait |
+| 9        | Scénarios (rollout, drain, panne) | fait |
 
 ---
 
@@ -52,26 +56,28 @@ Avancement :
 
 ## 1. Ce qui est créé dans le cluster
 
-### Ce qu'on écrit (15 objets)
+### Ce qu'on écrit (23 objets)
 
 `kubectl kustomize k8s/` produit exactement ces objets :
 
-| Type                | Nom                    | Vient de             | Rôle                                                          |
-| ------------------- | ---------------------- | -------------------- | ------------------------------------------------------------- |
-| Namespace           | `bernstein`            | `namespace.yaml`     | Le « dossier » qui contient tout le reste                     |
-| ConfigMap           | `app-config-<hash>`    | `kustomization.yaml` | Adresses et noms (Redis, Postgres)                            |
-| ConfigMap           | `postgres-init-<hash>` | `kustomization.yaml` | Le fichier `schema.sql`                                       |
-| Secret              | `app-secrets-<hash>`   | `kustomization.yaml` | Les mots de passe (`secrets.env`)                             |
-| Service             | `postgres`             | `postgres.yaml`      | Adresse interne de la base                                    |
-| Service             | `redis`                | `redis.yaml`         | Adresse interne de la file                                    |
-| Service             | `poll`                 | `poll.yaml`          | **IP publique** de la page de vote                            |
-| Service             | `result`               | `result.yaml`        | **IP publique** de la page des résultats                      |
-| PodDisruptionBudget | `poll`, `result`       | `pdb.yaml`           | Au moins 1 pod de chaque toujours disponible pendant un drain |
-| StatefulSet         | `postgres`             | `postgres.yaml`      | La base, avec son disque                                      |
-| Deployment          | `redis`                | `redis.yaml`         | La file de votes                                              |
-| Deployment          | `worker`               | `worker.yaml`        | Redis → Postgres                                              |
-| Deployment          | `poll`                 | `poll.yaml`          | Page de vote                                                  |
-| Deployment          | `result`               | `result.yaml`        | Page des résultats                                            |
+| Type                    | Nom                    | Vient de                | Rôle                                                          |
+| ----------------------- | ---------------------- | ----------------------- | ------------------------------------------------------------- |
+| Namespace               | `bernstein`            | `namespace.yaml`        | Le « dossier » qui contient tout le reste                     |
+| ConfigMap               | `app-config-<hash>`    | `kustomization.yaml`    | Adresses et noms (Redis, Postgres)                            |
+| ConfigMap               | `postgres-init-<hash>` | `kustomization.yaml`    | Le fichier `schema.sql`                                       |
+| Secret                  | `app-secrets-<hash>`   | `kustomization.yaml`    | Les mots de passe (`secrets.env`)                             |
+| Service                 | `postgres`             | `postgres.yaml`         | Adresse interne de la base                                    |
+| Service                 | `redis`                | `redis.yaml`            | Adresse interne de la file                                    |
+| Service                 | `poll`                 | `poll.yaml`             | **IP publique** de la page de vote                            |
+| Service                 | `result`               | `result.yaml`           | **IP publique** de la page des résultats                      |
+| PodDisruptionBudget     | `poll`, `result`       | `pdb.yaml`              | Au moins 1 pod de chaque toujours disponible pendant un drain |
+| NetworkPolicy           | 7 (voir partie 8 ter)  | `network-policies.yaml` | Tout fermé, puis seulement les flux de l'app                  |
+| HorizontalPodAutoscaler | `poll`                 | `hpa.yaml`              | Poll entre 2 et 6 pods selon le CPU                           |
+| StatefulSet             | `postgres`             | `postgres.yaml`         | La base, avec son disque                                      |
+| Deployment              | `redis`                | `redis.yaml`            | La file de votes                                              |
+| Deployment              | `worker`               | `worker.yaml`           | Redis → Postgres                                              |
+| Deployment              | `poll`                 | `poll.yaml`             | Page de vote                                                  |
+| Deployment              | `result`               | `result.yaml`           | Page des résultats                                            |
 
 ### Ce que Kubernetes crée tout seul à partir de ça
 
@@ -88,7 +94,7 @@ Service postgres / redis / poll / result ──► EndpointSlice (la liste des I
 Service poll / result (LoadBalancer) ──► dans Azure : 1 IP publique + 1 règle sur le load balancer du cluster
 ```
 
-Total : **7 pods** (2 poll, 2 result, 1 worker, 1 redis, 1 postgres).
+Total : **7 pods** au repos (2 poll, 2 result, 1 worker, 1 redis, 1 postgres), jusqu'à 11 quand le HPA monte Poll à 6.
 
 À retenir : un **Service ne pointe jamais vers un pod précis**. Il pointe vers un **label** (`app.kubernetes.io/name: postgres`). Kubernetes tient à jour la liste des IP des pods qui portent ce label **et** qui sont ready (l'EndpointSlice).
 
@@ -239,17 +245,26 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: bernstein
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
 ```
 
 - `apiVersion: v1` : le groupe d'API « core » de Kubernetes, celui des objets de base (Pod, Service, ConfigMap, Secret, Namespace).
 - `kind: Namespace` : le type d'objet.
 - `metadata.name: bernstein` : son nom. Il n'a pas de `namespace` lui-même, puisque c'est un objet de niveau cluster.
+- Les 3 labels `pod-security.kubernetes.io/*` : le **Pod Security Admission**, intégré à l'API server. Le niveau `restricted` impose à chaque pod : pas de root, pas d'élévation de privilèges, toutes les capabilities retirées, un profil seccomp, et seulement certains types de volumes ([ADR 0027](../adr/0027-pod-security-standards.md)).
+  - `enforce` : un pod qui viole la règle est **refusé**.
+  - `warn` : `kubectl apply` affiche un avertissement, y compris pour un Deployment dont le modèle de pod viole la règle (le Deployment est accepté, ses pods seront refusés).
+  - `audit` : la violation est notée dans le journal d'audit de l'API.
 
 Le namespace sépare notre application des composants système (`kube-system`…) et permet de tout supprimer d'un coup. Attention : supprimer le namespace supprime **aussi la PVC, donc le disque et les votes** (la classe de stockage `default` d'AKS a `reclaimPolicy: Delete`).
 
 ### Questions probables
 
-- _« À quoi sert le namespace ? »_ Isoler et regrouper : `kubectl get pods -n bernstein` ne montre que nos pods. Les NetworkPolicies (#34) et les quotas s'appliquent aussi par namespace.
+- _« À quoi sert le namespace ? »_ Isoler et regrouper : `kubectl get pods -n bernstein` ne montre que nos pods. Les NetworkPolicies (partie 8 ter), le niveau de sécurité des pods et les quotas s'appliquent aussi par namespace.
+- _« Comment empêchez-vous un pod root ? »_ Le label `enforce: restricted`. Mesuré : `kubectl -n bernstein run` d'un pod `runAsUser: 0` répond `pods "root-test" is forbidden: violates PodSecurity "restricted:latest"`, avec la liste des règles violées.
 - _« `kubectl delete -k k8s/` garde-t-il les votes ? »_ Non : il supprime le namespace, donc la PVC et le disque. Supprimer seulement le pod ou le StatefulSet, en revanche, garde les données.
 
 ---
@@ -338,7 +353,10 @@ Ce trio `selector` / `template.labels` / `Service.selector` revient dans **tous*
 
 ```yaml
 spec:
+  automountServiceAccountToken: false
   securityContext:
+    seccompProfile:
+      type: RuntimeDefault
     runAsUser: 70
     runAsGroup: 70
     runAsNonRoot: true
@@ -346,6 +364,11 @@ spec:
 ```
 
 Le `securityContext` au niveau **pod** s'applique à tous ses conteneurs.
+
+- `automountServiceAccountToken: false` : par défaut, Kubernetes monte dans chaque conteneur un jeton pour appeler son API (`/var/run/secrets/kubernetes.io/serviceaccount`). Aucune de nos apps n'appelle l'API : sans jeton, un attaquant dans le conteneur n'a rien à essayer.
+- `seccompProfile: RuntimeDefault` : le filtre d'appels système par défaut du runtime (containerd) bloque les appels dangereux et rarement utiles. Exigé par le niveau `restricted` (partie 3). Vérifié : `Seccomp: 2` (filtre actif) dans `/proc/1/status`.
+
+Ces deux réglages sont les mêmes dans les 5 fichiers (`postgres`, `redis`, `worker`, `poll`, `result`) : les parties suivantes ne les répètent pas.
 
 - `runAsUser: 70` / `runAsGroup: 70` : les processus tournent avec l'uid et le gid 70, ceux de l'utilisateur `postgres` dans l'image Alpine (vérifié avec `id postgres` dans l'image).
 - `runAsNonRoot: true` : Kubernetes **refuse** de démarrer le conteneur s'il tournerait en root (uid 0). C'est un garde-fou.
@@ -436,12 +459,14 @@ resources:
 - `requests` : ce que le scheduler **réserve** sur un nœud pour placer le pod. `100m` = 100 millicores = 0,1 CPU.
 - `limits` : le **plafond**. Au-delà de 512 Mi de mémoire, le conteneur est tué (`OOMKilled`). Au-delà de 0,5 CPU, il est **ralenti** (throttling), pas tué.
 - `Mi` = mébioctet (1024 × 1024 octets).
+- **Mesuré** : 29 Mi et 5m au repos, 17m sous charge. La request de 256 Mi paraît large, mais Postgres réserve un cache de 128 Mo (`shared_buffers`, vérifié avec `SHOW shared_buffers`) qui se remplit à mesure qu'il lit des données ([ADR 0018](../adr/0018-resource-requests-and-limits.md)).
 
 ### La sécurité du conteneur
 
 ```yaml
 securityContext:
   allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
   capabilities:
     drop: ['ALL']
 ```
@@ -449,7 +474,7 @@ securityContext:
 - `allowPrivilegeEscalation: false` : un processus ne peut pas gagner plus de droits que son parent (par exemple via un binaire `setuid`).
 - `capabilities.drop: ['ALL']` : retire tous les « super-pouvoirs » Linux (changer de propriétaire d'un fichier, ouvrir un port bas…). Comme Postgres tourne directement en uid 70, il n'en a besoin d'aucun. Vérifié sur AKS : `CapEff: 0000000000000000`. _(Ajouté par la PR #61.)_
 
-Pas de `readOnlyRootFilesystem` ici : Postgres écrit dans `/var/run/postgresql` (socket) et dans des fichiers temporaires.
+- `readOnlyRootFilesystem: true` : le système de fichiers de l'image est en lecture seule. Postgres écrit ses données sur le disque (PVC), son socket et son fichier de verrou dans `/var/run/postgresql`, et des fichiers temporaires dans `/tmp` : ces deux dossiers sont des `emptyDir` (ci-dessous).
 
 ### Les volumes
 
@@ -460,21 +485,33 @@ volumeMounts:
   - name: init
     mountPath: /docker-entrypoint-initdb.d
     readOnly: true
+  - name: run
+    mountPath: /var/run/postgresql
+  - name: tmp
+    mountPath: /tmp
 ```
 
 `volumeMounts` dit **où** monter chaque volume dans le conteneur :
 
 - `data` sur `/var/lib/postgresql` : le disque persistant. L'image range ses fichiers dans le sous-dossier `18/docker`.
 - `init` sur `/docker-entrypoint-initdb.d` : le ConfigMap `postgres-init` apparaît comme un dossier, qui contient `schema.sql`. `readOnly` : Postgres peut le lire, pas le modifier.
+- `run` et `tmp` : les deux seuls dossiers où Postgres écrit hors du disque, puisque le reste est en lecture seule.
 
 ```yaml
 volumes:
   - name: init
     configMap:
       name: postgres-init
+  - name: run
+    emptyDir:
+      medium: Memory
+      sizeLimit: 1Mi
+  - name: tmp
+    emptyDir:
+      sizeLimit: 64Mi
 ```
 
-`volumes` dit **ce que sont** les volumes du pod. Ici, `init` est un ConfigMap (Kustomize ajoute le hash au nom). `data` n'est pas déclaré ici : il vient du `volumeClaimTemplates` juste en dessous.
+`volumes` dit **ce que sont** les volumes du pod. Ici, `init` est un ConfigMap (Kustomize ajoute le hash au nom). `run` est en mémoire (tmpfs) : un socket et un fichier de verrou de quelques octets. `tmp` est sur le disque du nœud, limité à 64 Mi. Les deux sont vides à chaque démarrage du pod. `data` n'est pas déclaré ici : il vient du `volumeClaimTemplates` juste en dessous.
 
 ### Le modèle de disque
 
@@ -573,7 +610,7 @@ securityContext:
   fsGroup: 1000
 ```
 
-L'uid 999 et le gid 1000 sont ceux de l'utilisateur `redis` dans l'image Alpine (vérifié avec `id redis`). Plus bas, le conteneur a `allowPrivilegeEscalation: false` et `capabilities.drop: ['ALL']`.
+L'uid 999 et le gid 1000 sont ceux de l'utilisateur `redis` dans l'image Alpine (vérifié avec `id redis`). Plus bas, le conteneur a `allowPrivilegeEscalation: false`, `capabilities.drop: ['ALL']` et `readOnlyRootFilesystem: true` : Redis n'écrit rien sur disque (`--save ''`, `--appendonly no`, ci-dessous), donc aucun `emptyDir` n'est nécessaire.
 
 ### La commande de démarrage
 
@@ -584,9 +621,9 @@ command:
   - -c
   - |
     if [ -n "$REDIS_PASSWORD" ]; then
-      exec redis-server --save '' --appendonly no --requirepass "$REDIS_PASSWORD"
+      exec redis-server --save '' --appendonly no --maxmemory 100mb --maxmemory-policy noeviction --requirepass "$REDIS_PASSWORD"
     else
-      exec redis-server --save '' --appendonly no
+      exec redis-server --save '' --appendonly no --maxmemory 100mb --maxmemory-policy noeviction
     fi
 ```
 
@@ -595,6 +632,8 @@ command:
 - `if [ -n "$REDIS_PASSWORD" ]` : si un mot de passe est défini (non vide), Redis démarre avec `--requirepass`. Sinon, il démarre sans authentification.
 - `--save ''` : désactive les **sauvegardes RDB** périodiques, actives par défaut.
 - `--appendonly no` : désactive le **journal AOF**. Redis reste donc purement en mémoire : il n'écrit rien sur disque et ne fait jamais de `fork` pour sauvegarder.
+- `--maxmemory 100mb` : Redis plafonne lui-même sa mémoire, sous la limite du conteneur (128 Mi), ce qui laisse 28 Mio pour son propre fonctionnement.
+- `--maxmemory-policy noeviction` : une fois plein, Redis **refuse les écritures** au lieu d'effacer des clés. Testé sur AKS : un vote reçoit une erreur 500 de Poll, mais la page et `/readyz` répondent toujours, et le worker peut encore vider la file ([ADR 0018](../adr/0018-resource-requests-and-limits.md)).
 - `exec` : le shell **se remplace** par `redis-server`. Redis devient le processus principal (PID 1) et reçoit directement le signal `SIGTERM` quand Kubernetes l'arrête, ce qui permet un arrêt propre.
 
 ### Le mot de passe, optionnel
@@ -627,10 +666,11 @@ La liveness est le même test, avec `initialDelaySeconds: 10`, `periodSeconds: 1
 
 ### Les ressources
 
-Requests 50m / 64Mi, limits 250m / 128Mi. Redis vide pèse quelques Mo. La limite de 128 Mi borne la taille de la file : au-delà, le conteneur est tué et la file perdue. Un `maxmemory` est prévu dans le ticket #35 pour refuser plutôt les écritures.
+Requests 50m / 64Mi, limits 250m / 128Mi. **Mesuré** : 3 Mi et 5m au repos, 19m sous charge (37 votes par seconde). Sans `maxmemory`, une file qui grossit atteindrait les 128 Mi : le conteneur serait tué (`OOMKilled`) et toute la file perdue. Avec `maxmemory 100mb` et `noeviction`, Redis refuse les nouveaux votes et garde ceux en attente.
 
 ### Questions probables
 
+- _« Comment limiter le CPU de Redis ? »_ C'est déjà fait : `limits.cpu: 250m`. Au-delà, Redis est ralenti (throttling), pas tué. De toute façon, il exécute les commandes sur un seul thread principal.
 - _« Si Redis redémarre, que perd-on ? »_ Les votes encore dans la file, pas encore traités par le worker. En temps normal, la file est vide en quelques millisecondes. Un pod Redis revient en environ 4 s (mesuré).
 - _« Pourquoi pas de disque pour Redis ? »_ C'est un tampon, pas la source de vérité, qui est Postgres. Un disque ajouterait un coût et un rattachement lent lors d'un drain.
 - _« Que se passe-t-il pour Poll si Redis tombe ? »_ Le `/readyz` de Poll fait un `ping` sur Redis : les 2 pods Poll deviennent non ready, et la page de vote n'est plus servie. **Redis est un point unique de défaillance pour Poll.**
@@ -750,7 +790,7 @@ securityContext:
     drop: ['ALL']
 ```
 
-- La mémoire est plus haute que pour les autres apps, à cause de la **JVM** Java.
+- La mémoire est plus haute que pour les autres apps, à cause de la **JVM** Java. **Mesuré dans le pod** : la JVM lit la limite du conteneur (384 Mi) et choisit seule un tas maximum de 126 Mio et le ramasse-miettes Serial (elle ne voit qu'1 CPU avec la limite de 500m). Usage réel : 43 Mi au repos, 53 Mi sous charge. Au déploiement, le nouveau worker est prêt 5 s après son démarrage.
 - `readOnlyRootFilesystem: true` : tout le système de fichiers du conteneur est en lecture seule. Le worker n'écrit rien sur disque, et un attaquant ne pourrait déposer aucun fichier. Vérifié : `touch /app/x` donne `Read-only file system`.
 
 ### Questions probables
@@ -823,14 +863,16 @@ Le load balancing se fait donc **à 2 niveaux** : Azure répartit entre les **n�
 
 **`externalTrafficPolicy`** : non écrit, donc à sa valeur par défaut, `Cluster`. Chaque nœud accepte le trafic, même s'il n'a pas de pod Poll, et kube-proxy le fait suivre (1 saut de plus possible). L'app voit l'IP d'un nœud, pas celle du visiteur. L'autre valeur, `Local`, garde l'IP du visiteur, mais n'envoie qu'aux nœuds qui ont un pod ready. Pendant une mise à jour, Azure continuerait alors d'envoyer vers un nœud dont les pods partent, jusqu'à ce que sa sonde s'en rende compte. Nos apps n'utilisent pas l'IP du visiteur : `Cluster` est plus sûr ([ADR 0004](../adr/0004-public-access-loadbalancer.md)).
 
-### 2 replicas
+### Pas de `replicas` : c'est le HPA qui décide
 
 ```yaml
 spec:
-  replicas: 2
+  # No `replicas`: the HPA in hpa.yaml sets it (2 to 6). A value here would reset it on every apply.
 ```
 
-C'est la page que voit l'évaluateur. Avec 2 pods, il en reste toujours un pendant une mise à jour ou un drain. Chaque vote est une requête courte et sans état (le votant est identifié par un cookie), donc n'importe quel pod peut répondre.
+C'est la page que voit l'évaluateur. Le nombre de pods est fixé par le HPA (partie 8 quater) : **2 au repos**, jusqu'à 6 sous charge. Avec au moins 2 pods, il en reste toujours un pendant une mise à jour ou un drain. Chaque vote est une requête courte et sans état (le votant est identifié par un cookie), donc n'importe quel pod peut répondre.
+
+Pourquoi enlever `replicas` du fichier : sinon chaque `kubectl apply` (donc chaque `scripts/deploy.sh`) remettrait 2 pods, même si le HPA en voulait 6.
 
 Avec 2 replicas, la stratégie (`maxSurge: 1`, `maxUnavailable: 0`) donne : 2 pods, puis 3 (un nouveau démarre), puis 2 (un ancien s'arrête), puis 3, puis 2. Il y a **toujours au moins 2 pods** qui servent (mesuré pendant un `rollout restart`).
 
@@ -941,7 +983,7 @@ Résultat : tout le système de fichiers est en lecture seule, **sauf** `/tmp`, 
 
 ## 8. `k8s/result.yaml`, ligne par ligne
 
-Même structure que Poll : **2 replicas**, la même stratégie, la sysctl pour le port 80 et le système de fichiers en lecture seule. Différences :
+Même structure que Poll, mais **2 replicas fixes** (pas de HPA), la même stratégie, la sysctl pour le port 80 et le système de fichiers en lecture seule. Différences :
 
 ### Le Service public (LoadBalancer)
 
@@ -1076,6 +1118,187 @@ Le PDB est complémentaire de la stratégie `maxUnavailable: 0`, qui ne s'appliq
 
 ---
 
+## 8 ter. `k8s/network-policies.yaml`, ligne par ligne
+
+Une NetworkPolicy est un pare-feu entre pods, écrit avec des **labels** au lieu d'adresses IP. Le fichier contient 7 objets séparés par `---`.
+
+**Prérequis** : un moteur dans le cluster. Sans moteur, l'API accepte les objets et **rien n'est filtré**. Le nôtre est Cilium ([ADR 0025](../adr/0025-network-policies.md)) : un pod `cilium` par nœud applique les règles dans le noyau (eBPF), et remplace `kube-proxy`.
+
+### Tout fermer
+
+```yaml
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+```
+
+- `podSelector: {}` : **tous** les pods du namespace.
+- `policyTypes: [Ingress, Egress]` sans aucune règle : rien n'entre, rien ne sort.
+
+La règle à retenir : les policies **s'additionnent**. Un pod visé par au moins une policy n'accepte que ce qu'une de ses policies autorise. Il n'y a pas de règle « interdire » : on ferme en sélectionnant le pod, on ouvre en ajoutant une règle.
+
+### Le DNS
+
+```yaml
+podSelector: {}
+policyTypes:
+  - Egress
+egress:
+  - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+    ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP
+```
+
+- Sans elle, `default-deny` bloque aussi le DNS : Poll ne trouverait plus `redis`.
+- `namespaceSelector` et `podSelector` dans **le même élément** (un seul tiret) : les pods `kube-dns` **du** namespace `kube-system`. Avec un tiret devant `podSelector`, ce serait un « ou » : tout `kube-system`, ou les pods `kube-dns` de notre namespace.
+- UDP **et** TCP : le DNS passe en TCP quand la réponse est grande.
+
+### Poll (Result est pareil, avec Postgres)
+
+```yaml
+podSelector:
+  matchLabels:
+    app.kubernetes.io/name: poll
+policyTypes:
+  - Ingress
+  - Egress
+ingress:
+  - ports:
+      - port: 80
+        protocol: TCP
+egress:
+  - to:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: redis
+    ports:
+      - port: 6379
+        protocol: TCP
+```
+
+- `ingress` sans `from` : le port 80 est ouvert à tous. Le trafic public arrive par le load balancer et par n'importe quel nœud : sa source n'est pas fixe.
+- `egress` : seulement vers les pods `redis`, port 6379. Internet et Postgres sont fermés.
+- Il faut **les deux côtés** : l'egress de Poll vers Redis, **et** l'ingress de Redis depuis Poll. S'il en manque un, la connexion est bloquée.
+
+### Le worker
+
+Seulement de l'egress, vers Redis et vers Postgres. Pas de règle d'ingress : seul le kubelet l'appelle (ses probes), depuis le nœud, et ce trafic passe. Vérifié : le worker reste ready, sans redémarrage.
+
+### Redis et Postgres
+
+```yaml
+podSelector:
+  matchLabels:
+    app.kubernetes.io/name: redis
+policyTypes:
+  - Ingress
+ingress:
+  - from:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: poll
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: worker
+    ports:
+      - port: 6379
+        protocol: TCP
+```
+
+- Deux éléments dans `from` (deux tirets) : poll **ou** worker.
+- Pas d'egress listé : `default-deny` s'applique, Redis et Postgres ne peuvent rien appeler. Ils n'en ont pas besoin.
+- Postgres : pareil, depuis worker ou result, port 5432.
+
+### Ce qui n'est pas filtré
+
+`kubectl exec`, `logs` et `port-forward` passent par l'API et le kubelet, pas par le réseau des pods : la sauvegarde (`pg_dump` par `exec`) marche toujours.
+
+### Mesuré sur AKS
+
+- Depuis un pod Poll : `redis:6379` ouvert ; `postgres:5432` et `1.1.1.1:443` en timeout. Avant les policies, les trois s'ouvraient.
+- Depuis un pod Result : `postgres:5432` ouvert, `redis:6379` en timeout.
+- Un pod sans label dans `bernstein` : DNS OK, tout le reste bloqué. Un pod d'un autre namespace : Redis et Postgres bloqués, `poll:80` ouvert.
+- Sous `tests/zero-downtime.sh` : mise en place des policies 0 erreur sur 572 ; `rollout restart` 0 sur 1014 ; drain du nœud de Redis 0 sur 1481.
+- Le passage du cluster à Cilium (une seule fois) : environ 12 min, 3 drains via un nœud temporaire. Poll 225 échecs, Result 464, pendant que Redis et Postgres changeaient de nœud.
+
+### Questions probables
+
+- _« Comment prouvez-vous que Poll ne peut pas joindre Postgres ? »_ Depuis le pod Poll, une connexion à `postgres:5432` part en timeout, alors que `redis:6379` répond (commande dans l'[antisèche](cheatsheet.md)).
+- _« Et si le cluster de l'évaluateur n'a pas de moteur ? »_ Les policies sont acceptées et ignorées : l'app marche, mais rien n'est filtré. `DEPLOY.md` le vérifie dans ses prérequis.
+- _« Pourquoi bloquer aussi l'egress ? »_ Un pod compromis ne peut ni appeler internet ni les autres namespaces.
+- _« On ajoute un service, que se passe-t-il ? »_ Il est bloqué par défaut : ses connexions partent en timeout jusqu'à ce qu'on ajoute sa règle.
+
+---
+
+## 8 quater. `k8s/hpa.yaml`, ligne par ligne
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: poll
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: poll
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+- `scaleTargetRef` : l'objet dont le HPA change `replicas`, ici le Deployment `poll`.
+- `minReplicas: 2` : jamais moins, pour les rollouts et les drains.
+- `maxReplicas: 6` : 4 pods de plus = 200m demandés. Tout tient encore sur un seul nœud pendant un drain (1552m sur 1900m).
+- `averageUtilization: 70` : 70 % de la **request** CPU, pas du nœud. La request de Poll est 50m, donc la cible est 35m par pod. Au repos, Poll consomme 2m.
+
+**Le calcul**, toutes les 15 s : `pods voulus = arrondi au-dessus (pods actuels × utilisation mesurée / cible)`. Exemple mesuré : 2 pods à 263 % → 2 × 263 / 70 = 7,5, donc 8, plafonné à 6 (atteint en deux pas : 4, puis 6). Rien ne bouge si l'écart est sous 10 %.
+
+**D'où vient le CPU** : metrics-server, installé par AKS dans `kube-system`. C'est lui que lit `kubectl top`.
+
+**Le comportement par défaut** (rien d'écrit dans le fichier) :
+
+- montée **immédiate** : jusqu'à +4 pods ou +100 % toutes les 15 s ;
+- descente après **5 minutes** de recommandation plus basse : une pause courte dans le trafic ne retire pas de pods.
+
+### Mesuré sur AKS
+
+Charge : 4 pods busybox qui bouclent sur le Service `poll`, depuis un autre namespace (depuis `bernstein`, nos NetworkPolicies bloquent).
+
+- Charge lancée à 18:23:10. Le HPA lit 263 % à 18:24:39 (les métriques mettent ~1,5 min). 2 → 4 pods à 18:24:54, 4 → 6 à 18:25:10.
+- Drain du nœud sans Postgres avec 6 pods Poll : 3 évincés d'un coup, tout tient sur l'autre nœud.
+- Charge arrêtée à 18:27:25. 6 → 5 à 18:33:40, 5 → 2 à 18:34:41 : à chaque fois 5 min après la baisse de la recommandation.
+- **0 erreur sur 13 000 requêtes** d'une sonde dans le cluster, pendant toute la séquence.
+
+### Questions probables
+
+- _« Comment autoscalez-vous Poll ? »_ Un HPA sur le CPU, 2 à 6 pods, cible 70 % de la request. Démo : de la charge, puis `kubectl -n bernstein get hpa -w`.
+- _« Pourquoi pas de HPA sur Result ? »_ Sa charge ne grandit presque pas avec le nombre de spectateurs (une requête SQL par seconde et par pod), et ses WebSockets restent sur le pod où elles se sont ouvertes ([ADR 0008](../adr/0008-result-deployment.md)).
+- _« Pourquoi enlever `replicas` du Deployment ? »_ Sinon chaque `apply` remet 2 pods et se bat avec le HPA.
+- _« Que se passe-t-il au-delà de 6 ? »_ Rien : les 2 nœuds ont un CPU fixe. Il faudrait un 3e nœud, donc le cluster autoscaler.
+
+---
+
 ## 9. Scénarios : ce qui se passe quand…
 
 Pour chaque scénario : ce que fait Kubernetes, ce que voit l'utilisateur, et ce qui reste à améliorer (avec le ticket). État décrit : `main` actuel, avec Poll et Result exposés par des Services `LoadBalancer` (#24 à #26).
@@ -1093,7 +1316,7 @@ kubectl -n bernstein get pods -w             # dans un autre terminal, pour suiv
 3. Postgres attend son disque (quelques dizaines de secondes), puis initialise la base et la table `votes`.
 4. Pendant ce temps, le worker affiche `Waiting for db` et Result réessaie : leur readiness est rouge.
 5. Dès que Postgres et Redis répondent, tout passe au vert : `7/7` pods `Running` et `1/1` ou `2/2` ready.
-6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur :
+6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur. **Mesuré (#39)** : depuis un clone neuf et un namespace vide, l'app est en ligne en 1 min 29 s, images déjà en cache dans Docker :
 
 ```bash
 kubectl -n bernstein get svc poll result   # colonne EXTERNAL-IP
@@ -1189,14 +1412,17 @@ Après un redémarrage de Postgres, le worker est redémarré par sa liveness et
 
 ### 9.7 Monter en charge (scale)
 
+Automatique pour Poll : le HPA passe de 2 à 6 pods selon le CPU (partie 8 quater). **Mesuré** : 2 → 6 pods en 2 minutes après le début de la charge, retour à 2 environ 7 minutes après la fin, 0 erreur.
+
+À la main :
+
 ```bash
-kubectl -n bernstein scale deploy/poll --replicas=4
+kubectl -n bernstein scale deploy/result --replicas=4
 ```
 
 - 2 pods de plus sont créés. Le Service les ajoute à la répartition dès qu'ils sont ready.
-- **Attention** : le prochain déploiement (`scripts/deploy.sh`) remet `replicas: 2`, la valeur du fichier.
-- Automatique : un HPA sur Poll, selon le CPU (#33). Il utilise les `requests` comme base de calcul : 70 % d'utilisation = 70 % de `requests.cpu`.
-- Les nœuds : 2 aujourd'hui, 3 possibles au maximum avec le quota étudiant de 6 vCPU (#33, à décider).
+- **Attention** : le prochain déploiement remet `replicas: 2`, la valeur du fichier. Sur Poll, `scale` ne sert à rien : le HPA reprend la main à son passage suivant (toutes les 15 s).
+- Les nœuds : 2 aujourd'hui, fixes. Le HPA ajoute des pods, pas du CPU. Un 3e nœud demanderait le cluster autoscaler (quota étudiant de 6 vCPU, [ADR 0026](../adr/0026-poll-hpa.md)).
 
 ### 9.8 Arrêt et redémarrage du cluster (`az aks stop` / `start`)
 
@@ -1204,7 +1430,7 @@ kubectl -n bernstein scale deploy/poll --replicas=4
 - `start` : les nœuds sont **nouveaux** (noms différents), et tous les pods sont recréés. Postgres retrouve son disque et ses votes.
 - L'adresse du serveur API peut changer : il faut refaire `az aks get-credentials`.
 - Le disque Azure reste facturé même cluster arrêté (quelques centimes par mois pour 1 Gi).
-- Les Services `poll` et `result` existent toujours. Leurs IP publiques devraient être conservées : **à vérifier** au prochain `start` avec `kubectl -n bernstein get svc`. Azure les range dans le groupe de ressources du cluster (`MC_…`), où nos comptes n'ont pas le droit de lecture.
+- Les Services `poll` et `result` existent toujours, et leurs IP publiques sont **conservées** : vérifié à chaque `start` sur notre cluster, sans garantie écrite de Microsoft. Azure les range dans le groupe de ressources du cluster (`MC_…`), où nos comptes n'ont pas le droit de lecture. En revanche, supprimer le namespace libère les IP : le déploiement suivant en reçoit de nouvelles (vu dans #39).
 
 ### 9.9 Tout supprimer
 
@@ -1216,18 +1442,21 @@ Supprime le namespace, donc **tout**, y compris la PVC. La classe de stockage `d
 
 ### 9.10 Commandes utiles pendant la soutenance
 
-| Besoin                                      | Commande                                                                      |
-| ------------------------------------------- | ----------------------------------------------------------------------------- |
-| Voir tous nos objets                        | `kubectl -n bernstein get all`                                                |
-| Les IP publiques de Poll et Result          | `kubectl -n bernstein get svc poll result`                                    |
-| Voir sur quel nœud tourne chaque pod        | `kubectl -n bernstein get pods -o wide`                                       |
-| Pourquoi un pod ne démarre pas              | `kubectl -n bernstein describe pod <pod>` (section `Events`)                  |
-| Logs d'un pod (et du précédent)             | `kubectl -n bernstein logs <pod>` / `--previous`                              |
-| Suivre un rollout                           | `kubectl -n bernstein rollout status deploy/poll`                             |
-| Historique et retour arrière                | `kubectl -n bernstein rollout history deploy/poll` / `rollout undo …`         |
-| Relancer les pods sans changer l'image      | `kubectl -n bernstein rollout restart deploy/poll`                            |
-| Vers quels pods pointe un Service           | `kubectl -n bernstein get endpointslices -l kubernetes.io/service-name=redis` |
-| Voir le rendu sans rien appliquer           | `kubectl kustomize k8s/`                                                      |
-| Comparer avec ce qui tourne                 | `kubectl diff -k k8s/`                                                        |
-| Consommation CPU et mémoire                 | `kubectl -n bernstein top pods`                                               |
-| Tester un pod sans passer par l'IP publique | `kubectl -n bernstein port-forward deploy/poll 8080:80`                       |
+| Besoin                                      | Commande                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| Voir tous nos objets                        | `kubectl -n bernstein get all`                                                   |
+| Les IP publiques de Poll et Result          | `kubectl -n bernstein get svc poll result`                                       |
+| Voir sur quel nœud tourne chaque pod        | `kubectl -n bernstein get pods -o wide`                                          |
+| Pourquoi un pod ne démarre pas              | `kubectl -n bernstein describe pod <pod>` (section `Events`)                     |
+| Logs d'un pod (et du précédent)             | `kubectl -n bernstein logs <pod>` / `--previous`                                 |
+| Suivre un rollout                           | `kubectl -n bernstein rollout status deploy/poll`                                |
+| Historique et retour arrière                | `kubectl -n bernstein rollout history deploy/poll` / `rollout undo …`            |
+| Relancer les pods sans changer l'image      | `kubectl -n bernstein rollout restart deploy/poll`                               |
+| Vers quels pods pointe un Service           | `kubectl -n bernstein get endpointslices -l kubernetes.io/service-name=redis`    |
+| Voir le rendu sans rien appliquer           | `kubectl kustomize k8s/`                                                         |
+| Comparer avec ce qui tourne                 | `kubectl diff -k .deploy`                                                        |
+| Consommation CPU et mémoire                 | `kubectl -n bernstein top pods`                                                  |
+| Tester un pod sans passer par l'IP publique | `kubectl -n bernstein port-forward deploy/poll 8080:80`                          |
+| Ajouter des outils dans un pod (debug)      | `kubectl -n bernstein debug <pod> -it --image=busybox:1.37 --profile=restricted` |
+
+`.deploy/` est l'overlay écrit par le dernier `scripts/deploy.sh`, avec les images de notre registry. `kubectl diff -k k8s/` afficherait une fausse différence sur chaque image : la base ne nomme aucun registry (vérifié sur AKS).
