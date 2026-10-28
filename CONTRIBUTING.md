@@ -54,10 +54,11 @@ docker compose down -v
 
 ## Development & CI/CD Commands
 
-| Command                               | Action                                                                                                                                                       |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `npm run codemap`                     | Regenerates `.claude/codemap.md` (services, routes, env vars, file tree).                                                                                    |
-| `npm run format:check`                | Checks code and markdown formatting across the entire repo.                                                                                                  |
-| `npm run format`                      | Automatically formats all code, manifests, and documentation with Prettier.                                                                                  |
-| `docker compose config`               | Validates local Docker Compose file syntax.                                                                                                                  |
-| `tests/zero-downtime.sh -- <command>` | Requests Poll and Result while `<command>` updates them; fails on any error. `--from both` also requests them from a pod in the cluster. `--help` for usage. |
+| Command                                                                               | Action                                                                                                                                                              |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run codemap`                                                                     | Regenerates `.claude/codemap.md` (services, routes, env vars, file tree).                                                                                           |
+| `npm run format:check`                                                                | Checks code and markdown formatting across the entire repo.                                                                                                         |
+| `npm run format`                                                                      | Automatically formats all code, manifests, and documentation with Prettier.                                                                                         |
+| `docker compose config`                                                               | Validates local Docker Compose file syntax.                                                                                                                         |
+| `tests/zero-downtime.sh -- <command>`                                                 | Requests Poll and Result while `<command>` updates them; fails on any error. `--from both` also requests them from a pod in the cluster. `--help` for usage.        |
+| `kubectl kustomize k8s/ \| kubeconform -strict -summary -kubernetes-version 1.36.4 -` | Validates every rendered object against the Kubernetes schema, as CI does (needs [kubeconform](https://github.com/yannh/kubeconform) v0.8.0 and `k8s/secrets.env`). |
