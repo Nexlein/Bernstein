@@ -31,6 +31,9 @@ spec:
       maxSurge: 1
       maxUnavailable: 0
   minReadySeconds: 5
+  # A rollout with no new Ready pod for 2 min fails (ProgressDeadlineExceeded) instead of waiting
+  # 10 min; the old pods keep serving meanwhile. Pods start in 1 to 13 s, plus up to ~20 s of image pull.
+  progressDeadlineSeconds: 120
   selector:
     matchLabels:
       app.kubernetes.io/name: result
@@ -77,11 +80,14 @@ spec:
             - configMapRef:
                 name: app-config
           env:
+            # Read-only database user (k8s/users.sh). Overrides POSTGRES_USER from app-config.
+            - name: POSTGRES_USER
+              value: result_reader
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
-                  key: POSTGRES_PASSWORD
+                  key: RESULT_DB_PASSWORD
           # Liveness: the process answers. Readiness: it also reaches PostgreSQL.
           livenessProbe:
             httpGet:

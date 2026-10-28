@@ -82,6 +82,30 @@ updates:
       - dependency-name: 'maven'
         versions: ['3.9-eclipse-temurin-26']
 
+  # Redis and PostgreSQL images in the Kubernetes manifests (tag and digest)
+  - package-ecosystem: docker
+    directory: /k8s
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore(deps-k8s)
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  # The same images in docker-compose.yml (local stack and CI): keep them equal to k8s/
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore(deps-compose)
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
   # GitHub Actions workflows
   - package-ecosystem: github-actions
     directory: /
