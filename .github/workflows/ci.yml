@@ -137,3 +137,19 @@ jobs:
       - name: Cleanup Compose Stack
         if: always()
         run: docker compose down -v
+
+  # Our own rules (CLAUDE.md, ADR 0030) on the rendered manifests: resources, non-root, rollout
+  # strategy, 2+ pods for Poll and Result, probes, preStop, PDBs, which Services are public.
+  baseline-rules:
+    name: K8s Baseline Rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      # yq ships with the runner image; the script needs only Node.
+      - name: Check the Baseline Rules
+        shell: bash
+        run: |
+          cp k8s/secrets.env.example k8s/secrets.env
+          kubectl kustomize k8s/ | yq ea -o=json '[.]' | node scripts/check-baseline.mjs

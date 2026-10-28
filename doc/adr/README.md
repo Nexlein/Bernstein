@@ -40,6 +40,7 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 | [0026](0026-poll-hpa.md)                     | Autoscaling        | HPA on Poll: 2 to 6 pods at 70 % of the CPU request; Result fixed                    | Autoscale Poll? Why these numbers? Why not Result? Why no cluster autoscaler?             |
 | [0027](0027-pod-security-standards.md)       | Pod security       | `restricted` enforced on the namespace; seccomp, no token, read-only root everywhere | How do you stop a root pod? What does `restricted` check? How do you debug then?          |
 | [0029](0029-manifest-schema-validation.md)   | CI validation      | kubeconform `-strict` on the rendered manifests, Kubernetes 1.36.4 and 1.31.0        | How do you catch a misspelled field before deploying?                                     |
+| [0030](0030-baseline-rules-check.md)         | CI rules           | Node script: resources, non-root, rollout, 2+ pods, probes, PDBs, Service types      | How do you keep the baseline rules from being dropped?                                    |
 
 ## By file
 
@@ -59,7 +60,8 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 | `k8s/network-policies.yaml`           | [0025](0025-network-policies.md)                                                                                                                                                                                                                                                                         |
 | `scripts/deploy.sh`                   | [0005](0005-image-tags-git-sha.md), [0017](0017-deploy-script.md)                                                                                                                                                                                                                                        |
 | `tests/zero-downtime.sh`              | [0016](0016-zero-downtime-test.md)                                                                                                                                                                                                                                                                       |
-| `.github/workflows/ci.yml`            | [0029](0029-manifest-schema-validation.md)                                                                                                                                                                                                                                                               |
+| `.github/workflows/ci.yml`            | [0029](0029-manifest-schema-validation.md), [0030](0030-baseline-rules-check.md)                                                                                                                                                                                                                         |
+| `scripts/check-baseline.mjs`          | [0030](0030-baseline-rules-check.md)                                                                                                                                                                                                                                                                     |
 
 ## Known limits
 
