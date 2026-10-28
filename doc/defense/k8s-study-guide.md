@@ -586,6 +586,7 @@ spec:
       maxSurge: 1
       maxUnavailable: 0
   minReadySeconds: 5
+  progressDeadlineSeconds: 120
 ```
 
 - `kind: Deployment` : des pods interchangeables, ce qui convient puisque Redis n'a pas de disque.
@@ -595,6 +596,7 @@ spec:
   - `maxSurge: 1` : 1 pod de plus que `replicas` est autorisé pendant la mise à jour ;
   - `maxUnavailable: 0` : jamais moins de `replicas` pods disponibles.
 - `minReadySeconds: 5` : un nouveau pod doit rester ready **5 s** avant d'être compté comme disponible. Ça évite de valider un pod qui serait ready une seconde, puis planterait.
+- `progressDeadlineSeconds: 120` : si aucun nouveau pod ne devient ready pendant **2 min**, le rollout est marqué en échec (défaut : 10 min). Kubernetes ne fait que le signaler ; les anciens pods continuent de servir (partie 9.2 bis).
 
 Pour Redis, ça veut dire : le nouveau pod démarre, devient ready, puis l'ancien s'arrête. Poll ne perd jamais Redis pendant une mise à jour.
 
@@ -1353,6 +1355,32 @@ Chaque ancien pod passe d'abord **5 s en `preStop`** : il sort des endpoints tou
 **Piège** : lancer le test depuis la machine qui pousse les images fausse la mesure si le push est gros. Au premier déploiement (3 images neuves), l'upload a saturé la connexion : 2 timeouts pendant le push, aucun pendant le rollout. Une modification de code ne pousse qu'une petite couche, donc pas de souci en soutenance.
 
 **Autre piège, mesuré (#100)** : une connexion domestique faible perd des connexions même sans déploiement (0,2 à 1,6 % de timeouts au repos), alors qu'une sonde dans le cluster ne voyait aucune erreur sur 11 500 requêtes. Toujours lancer d'abord `DURATION=60 tests/zero-downtime.sh` sans rien déployer : il doit passer.
+
+### 9.2 bis Une mise à jour cassée (la nouvelle version ne démarre pas)
+
+Rien ne coupe. Avec `maxUnavailable: 0`, Kubernetes n'arrête un ancien pod qu'une fois un nouveau ready. Le nouveau ne l'est jamais : les 2 anciens pods continuent de servir, et le pod cassé ne reçoit aucun trafic (il n'est pas dans les endpoints du Service).
+
+```
+t0       ancien : 2 pods (servent)     nouveau : 1 pod, jamais ready
+…        rien ne bouge, le rollout attend
+t0+2 min progressDeadlineSeconds dépassé → Progressing=False, reason ProgressDeadlineExceeded
+```
+
+Testé sur AKS (#108) avec Poll, et une sonde dans le cluster qui interroge Poll et Result en boucle : **0 erreur** dans les 3 cas.
+
+| Panne                          | Statut du nouveau pod | Pourquoi                                          |
+| ------------------------------ | --------------------- | ------------------------------------------------- |
+| tag d'image qui n'existe pas   | `ImagePullBackOff`    | le nœud ne trouve pas l'image                     |
+| le conteneur sort au démarrage | `CrashLoopBackOff`    | relancé avec un délai croissant (4 fois en 100 s) |
+| Poll ne joint pas Redis        | `Running`, `0/1`      | la readiness (`/readyz`) échoue                   |
+
+- **`progressDeadlineSeconds: 120`** : après 2 min sans progrès, Kubernetes marque le rollout en échec. Le défaut est 600 s. Nos pods démarrent en 1 à 13 s, plus ~20 s de pull d'image au pire : 2 min laisse de la marge.
+- Kubernetes **ne fait rien d'autre** : il signale, il ne revient pas en arrière ([doc Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#failed-deployment)). Si le pod finit par devenir ready, le rollout se termine.
+- `kubectl rollout status` sort alors en erreur (`exceeded its progress deadline`). `scripts/deploy.sh` s'arrête, nomme le Deployment et affiche les commandes de retour arrière.
+- **Pas de rollback automatique dans le script non plus** : les anciens pods servent, rien ne presse. On lit d'abord la cause (`describe` du nouveau pod), puis on choisit : corriger et redéployer, `rollout undo`, ou `TAG=<bon tag>` ([ADR 0017](../adr/0017-deploy-script.md)).
+- Avec `TAG=`, le script vérifie d'abord que les 3 images existent dans l'ACR : un tag mal tapé s'arrête avant tout changement.
+
+**Mesuré** : Poll cassé déployé avec `scripts/deploy.sh` : échec après 2 min, avec le message. Puis `TAG=<tag précédent>` : Poll revenu en ~16 s, pod cassé supprimé. 0 erreur dans le cluster.
 
 ### 9.3 Changement de config ou de mot de passe
 
