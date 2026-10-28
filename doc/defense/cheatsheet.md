@@ -183,3 +183,9 @@ trivy image --severity CRITICAL --ignore-unfixed --ignorefile .trivyignore.yaml 
 ```
 
 Détails : [ADR 0033](../adr/0033-ci-image-scan.md), [ADR 0023](../adr/0023-security-posture.md).
+
+## 16. « Comment savez-vous que ça marche ? »
+
+On teste notre déploiement, pas le code fourni : l'app arrive sans tests, et c'est le déploiement qui est noté. Chaque PR passe 7 vérifications en CI. Les plus parlantes : la stack Compose avec un vote de bout en bout, et un vrai cluster Kubernetes 1.36.4 (kind) où l'on déploie `k8s/`, vote, puis fait un rollout et un drain sous `tests/zero-downtime.sh`, avec 0 erreur exigée. Sur AKS, on a mesuré à la main ce que kind ne couvre pas : 0 erreur sur 975 et 1996 requêtes pendant un rollout, 0 sur 2221 pendant un drain. Les coupures connues viennent toutes de Postgres, qui n'a qu'un réplica : par exemple Result tombe 39 s quand on draine le nœud de Postgres. Chaque test dit aussi ce qu'il ne prouve pas.
+
+Détails : [`CONTRIBUTING.md`, Tests](../../CONTRIBUTING.md#tests), [ADR 0031](../adr/0031-ci-kind-e2e.md).
