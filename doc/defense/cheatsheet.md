@@ -14,10 +14,11 @@ tests/zero-downtime.sh -- kubectl drain <nœud> --ignore-daemonsets --delete-emp
 kubectl uncordon <nœud>                 # le nœud reçoit de nouveau des pods (les anciens ne reviennent pas)
 ```
 
-**Avant la démo, vérifier la répartition.** Après `az aks start` (ou un pod tué), les pods d'une app peuvent être sur le même nœud : l'anti-affinity n'est que préférée. Vu le 27/10 : les 7 pods sur un seul nœud après un `start`. Pour répartir Poll et Result (mesuré : 0 erreur sur 1205 requêtes) :
+**Avant la démo, vérifier la répartition.** Après `az aks start` (ou un pod tué), les pods d'une app peuvent être sur le même nœud : l'anti-affinity n'est que préférée. Vu après chaque `start` (27/10 et 28/10) : les 7 pods sur un seul nœud. Pour vérifier, puis répartir Poll et Result (mesuré : 0 erreur sur 1205 requêtes, puis sur 1280 depuis la machine et 2765 depuis le cluster) :
 
 ```bash
-tests/zero-downtime.sh -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll deploy/result'
+kubectl -n bernstein get pods -l 'app.kubernetes.io/name in (poll,result)' -o wide
+tests/zero-downtime.sh --from both -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll deploy/result'
 ```
 
 Détails : [ADR 0014](../adr/0014-pod-disruption-budgets.md), [ADR 0013](../adr/0013-pod-anti-affinity.md), [guide 9.5](k8s-study-guide.md#95-kubectl-drain-dun-nœud-question-classique).
