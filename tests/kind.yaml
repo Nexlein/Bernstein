@@ -1,0 +1,9 @@
+# kind cluster of the CI end-to-end job (ADR 0031). The node image, Kubernetes 1.36.4 like our
+# AKS, is set by the workflow. 2 workers: the anti-affinity can spread Poll and Result, and a
+# node can be drained. kind enforces NetworkPolicies out of the box (since v0.24).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
