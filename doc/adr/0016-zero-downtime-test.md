@@ -25,6 +25,7 @@
 - The WebSocket of Result is not tested: its connection is cut when its pod stops, and socket.io reconnects ([ADR 0008](0008-result-deployment.md)). `curl` only sees the page.
 - Browsers reuse connections (keep-alive); the script opens a new one per request. A reused connection to a stopping pod is not tested.
 - **The test machine's connection is part of the measurement.** A busy one (a big image push, a system update downloading) slowed requests until some timed out, on Poll and Result at the same seconds, while only one app was updating. Seen twice on our machine; the rerun on an idle connection passed. Errors on both apps at once point to the client, not the rollout.
+- **A weak connection fails even at rest.** On 2026-10-28, with nothing deploying, runs from a home connection had 0.2 to 1.6 % connect timeouts (`curl exit 28` after 2 s), not aligned between the apps; 1 in 467 connections to `1.1.1.1` failed at the same time. A probe inside the cluster (busybox `wget` on the Services, every 0.1 s) saw 0 errors in 11 500 requests over the same runs and rollouts. So the test runs once without a command first, and must pass before the graded run (`DEPLOY.md` section 4).
 - Modest load (about 12 requests per second per app with 2 loops, on AKS): it proves that no request fails during an update, not how much load the apps take.
 
 ## Alternatives rejected

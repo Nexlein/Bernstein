@@ -1,6 +1,6 @@
 # Deploy Bernstein
 
-How to deploy the voting app on your own AKS cluster and private registry, from a fresh clone. Why each choice was made: [`doc/adr/`](doc/adr/README.md). Last followed end to end from a fresh clone: 2026-10-27 (#39).
+How to deploy the voting app on your own AKS cluster and private registry, from a fresh clone. Why each choice was made: [`doc/adr/`](doc/adr/README.md). Last followed end to end from a fresh clone of the Epitech mirror: 2026-10-28 (#100).
 
 0. [Get the code](#0-get-the-code).
 1. [Prerequisites](#1-prerequisites): tools, and an AKS cluster attached to a private ACR registry.
@@ -43,6 +43,7 @@ Install steps: [setup guide, prerequisites](doc/setup/cluster-setup.md#0-prerequ
   - you have a cluster but no registry: [create the registry](doc/setup/cluster-setup.md#4-create-the-private-registry-acr), then [attach it to your cluster](doc/setup/cluster-setup.md#already-have-a-cluster-attach-the-registry);
   - you have neither: follow the [setup guide](doc/setup/cluster-setup.md) from step 1.
 - Attaching needs the **Owner** role (or equivalent) on the subscription, because it creates a role assignment ([ADR 0002](doc/adr/0002-acr-registry.md)).
+- **Kubernetes 1.31 or later** on the cluster. The manifests use the `preStop` sleep action, on by default since 1.30 ([PodLifecycleSleepAction](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#PodLifecycleSleepAction)), and `matchLabelKeys` in the pod anti-affinity, on by default since 1.31 ([MatchLabelKeysInPodAffinity](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#MatchLabelKeysInPodAffinity)). AKS offered 1.31 to 1.37 on 2026-10-28 (`az aks get-versions -l <location> -o table`); we test on 1.36.
 - A **network policy engine** on the cluster, so that `k8s/network-policies.yaml` is enforced. Without one, the policies are accepted and ignored: the app works, but any pod can reach Redis and PostgreSQL ([ADR 0025](doc/adr/0025-network-policies.md)). Check it, this must not print `none`:
 
   ```bash
@@ -108,7 +109,7 @@ In order, the script:
 4. applies `k8s/` with those images, through a generated overlay in `.deploy/`, and waits for every rollout;
 5. waits for the public IPs and prints the URLs of Poll and Result.
 
-The first run takes a few minutes (builds, first push, disk, public IPs); the next ones about a minute. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
+Measured from a fresh clone of the Epitech mirror: 2 min 11 s for the first run (base images pulled, 3 images built and pushed, disk and public IPs created); the next ones about a minute. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
 
 ### Check the deployment
 
@@ -129,6 +130,14 @@ kubectl -n bernstein exec postgres-0 -- psql -U postgres -d postgres -c "SELECT 
 
 The graded test: change the code and redeploy while the app is being requested.
 
+First check your own connection, with nothing deploying. This must end with `PASS: no failed request.`:
+
+```bash
+DURATION=60 tests/zero-downtime.sh
+```
+
+If it fails, the network between your machine and Azure drops connections, and the graded run would fail for that reason: use another connection ([troubleshooting](#7-troubleshooting)).
+
 1. Change something visible, for example the `<h3>` title in `poll-application/poll/templates/index.html`. No commit needed: uncommitted changes get a `-dirty` tag, so a new rollout. Leave the vote option labels alone: Result has them hardcoded ([ADR 0011](doc/adr/0011-poll-deployment.md)).
 2. Redeploy under the zero-downtime test:
 
@@ -137,6 +146,8 @@ The graded test: change the code and redeploy while the app is being requested.
    ```
 
    It requests Poll and Result continuously while the script builds, pushes and rolls out, then prints every error, or `PASS: no failed request.` ([ADR 0016](doc/adr/0016-zero-downtime-test.md)).
+
+   `kubectl` prints `statefulset.apps/postgres configured` and the PodDisruptionBudgets `configured` on every run, even when nothing changed for them. PostgreSQL is not restarted: its start time stays the same and `kubectl diff` shows no difference.
 
 3. Optional, in a second terminal: `kubectl -n bernstein get pods -w` shows the pods replaced one at a time.
 4. Reload the Poll page: the new title shows, and "Processed by container ID" names the pod that answered.
@@ -188,16 +199,16 @@ az group delete --name <resource-group> --yes   # every resource in the group: c
 
 ## 7. Troubleshooting
 
-| Symptom                                                                                                                                             | Likely cause                                                                          | Fix                                                                                                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `ImagePullBackOff` on poll, worker or result                                                                                                        | the cluster cannot pull from the registry, or `kubectl apply -k k8s/` was run by hand | [check the pull permission](#check-the-pull-permission); deploy with `scripts/deploy.sh`                                               |
-| `EXTERNAL-IP` stays `<pending>`                                                                                                                     | Azure is still creating the public IP                                                 | wait 1 to 2 minutes (the script waits up to 5)                                                                                         |
-| worker restarts, Result not ready; `kubectl -n bernstein logs deploy/worker` says `password authentication failed` or `password is an empty string` | `POSTGRES_PASSWORD` is empty, or differs from the one the database was created with   | put that password back in `k8s/secrets.env` and redeploy ([app secrets](#app-secrets-k8ssecretsenv))                                   |
-| `kubectl` cannot reach the cluster after a restart (`i/o timeout`)                                                                                  | right after `az aks start` the API server can need a minute, or its IP changed        | wait a minute and retry; if it still fails: `az aks get-credentials -g <resource-group> -n <cluster> --overwrite-existing`             |
-| `scripts/deploy.sh` stops with `ERROR: ...`                                                                                                         | a prerequisite is missing                                                             | the message names it and the command to fix it                                                                                         |
-| `tests/zero-downtime.sh` shows timeouts on Poll **and** Result at the same seconds                                                                  | the test machine's own connection is busy (a big push, a system update downloading)   | rerun from an idle connection or another machine. A real rollout problem only hits the app being updated                               |
-| Votes fail with HTTP 500, `kubectl -n bernstein logs deploy/poll` shows `OutOfMemoryError`                                                          | the Redis queue is full (100 MB): the worker or PostgreSQL has been down for a while  | bring the worker and PostgreSQL back: the queue drains and votes work again ([ADR 0018](doc/adr/0018-resource-requests-and-limits.md)) |
-| A pod you added cannot reach Redis, PostgreSQL or the internet (timeouts)                                                                           | `k8s/network-policies.yaml` denies every flow it does not list                        | add an allow rule for the new flow ([ADR 0025](doc/adr/0025-network-policies.md))                                                      |
+| Symptom                                                                                                                                                | Likely cause                                                                                                  | Fix                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ImagePullBackOff` on poll, worker or result                                                                                                           | the cluster cannot pull from the registry, or `kubectl apply -k k8s/` was run by hand                         | [check the pull permission](#check-the-pull-permission); deploy with `scripts/deploy.sh`                                                                                                                                 |
+| `EXTERNAL-IP` stays `<pending>`                                                                                                                        | Azure is still creating the public IP                                                                         | wait 1 to 2 minutes (the script waits up to 5)                                                                                                                                                                           |
+| worker restarts, Result not ready; `kubectl -n bernstein logs deploy/worker` says `password authentication failed` or `password is an empty string`    | `POSTGRES_PASSWORD` is empty, or differs from the one the database was created with                           | put that password back in `k8s/secrets.env` and redeploy ([app secrets](#app-secrets-k8ssecretsenv))                                                                                                                     |
+| `kubectl` cannot reach the cluster after a restart (`i/o timeout`)                                                                                     | right after `az aks start` the API server can need a minute, or its IP changed                                | wait a minute and retry; if it still fails: `az aks get-credentials -g <resource-group> -n <cluster> --overwrite-existing`                                                                                               |
+| `scripts/deploy.sh` stops with `ERROR: ...`                                                                                                            | a prerequisite is missing                                                                                     | the message names it and the command to fix it                                                                                                                                                                           |
+| `tests/zero-downtime.sh` shows timeouts (`curl exit 28`) on Poll and Result, also in a `DURATION=60 tests/zero-downtime.sh` run with nothing deploying | the network between your machine and Azure drops or delays connections: a busy upload, a weak home connection | rerun from another connection. Measured from a home connection at rest: 0.2 to 1.6 % connect timeouts, while a probe inside the cluster saw 0 errors in 11 500 requests ([ADR 0016](doc/adr/0016-zero-downtime-test.md)) |
+| Votes fail with HTTP 500, `kubectl -n bernstein logs deploy/poll` shows `OutOfMemoryError`                                                             | the Redis queue is full (100 MB): the worker or PostgreSQL has been down for a while                          | bring the worker and PostgreSQL back: the queue drains and votes work again ([ADR 0018](doc/adr/0018-resource-requests-and-limits.md))                                                                                   |
+| A pod you added cannot reach Redis, PostgreSQL or the internet (timeouts)                                                                              | `k8s/network-policies.yaml` denies every flow it does not list                                                | add an allow rule for the new flow ([ADR 0025](doc/adr/0025-network-policies.md))                                                                                                                                        |
 
 ### Debug a broken pod
 
@@ -247,4 +258,4 @@ Restore it. This replaces the `votes` table with the content of the dump:
 kubectl -n bernstein exec -i postgres-0 -- psql -q -U postgres -d postgres < ~/votes-backup.sql
 ```
 
-Tested on AKS: a dump of 6195 votes, restored into a scratch database, gave the same rows and the same checksum.
+Tested on AKS: a dump of 6195 votes, restored into a scratch database, gave the same rows and the same checksum. On the live database (2026-10-28): 25 votes, then a restore of a dump taken at 20, gave exactly those 20. `psql` prints one `set_config` line: that is expected.

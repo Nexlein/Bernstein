@@ -1316,7 +1316,7 @@ kubectl -n bernstein get pods -w             # dans un autre terminal, pour suiv
 3. Postgres attend son disque (quelques dizaines de secondes), puis initialise la base et la table `votes`.
 4. Pendant ce temps, le worker affiche `Waiting for db` et Result réessaie : leur readiness est rouge.
 5. Dès que Postgres et Redis répondent, tout passe au vert : `7/7` pods `Running` et `1/1` ou `2/2` ready.
-6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur. **Mesuré (#39)** : depuis un clone neuf et un namespace vide, l'app est en ligne en 1 min 29 s, images déjà en cache dans Docker :
+6. En parallèle, Azure attribue les 2 IP publiques (environ 20 s). On les donne à l'évaluateur. **Mesuré** : depuis un clone neuf et un namespace vide, l'app est en ligne en 1 min 29 s avec les images déjà en cache dans Docker (#39), et en 2 min 11 s depuis un clone du miroir Epitech, images de base à télécharger (#100) :
 
 ```bash
 kubectl -n bernstein get svc poll result   # colonne EXTERNAL-IP
@@ -1351,6 +1351,8 @@ Chaque ancien pod passe d'abord **5 s en `preStop`** : il sort des endpoints tou
 **Mesuré sur AKS** : requêtes en continu (toutes les 50 ms) sur les 2 IP publiques pendant `kubectl rollout restart deploy/poll deploy/result` : **0 erreur sur 2461 requêtes**. Même test avec `tests/zero-downtime.sh` (#29, [ADR 0016](../adr/0016-zero-downtime-test.md)) : 0 erreur sur 975, puis sur 1996 requêtes. Et le scénario complet de la soutenance, une modification non commitée de Poll déployée avec `scripts/deploy.sh` : en ligne en 52 s, **0 erreur sur 1225 requêtes** ([ADR 0017](../adr/0017-deploy-script.md)).
 
 **Piège** : lancer le test depuis la machine qui pousse les images fausse la mesure si le push est gros. Au premier déploiement (3 images neuves), l'upload a saturé la connexion : 2 timeouts pendant le push, aucun pendant le rollout. Une modification de code ne pousse qu'une petite couche, donc pas de souci en soutenance.
+
+**Autre piège, mesuré (#100)** : une connexion domestique faible perd des connexions même sans déploiement (0,2 à 1,6 % de timeouts au repos), alors qu'une sonde dans le cluster ne voyait aucune erreur sur 11 500 requêtes. Toujours lancer d'abord `DURATION=60 tests/zero-downtime.sh` sans rien déployer : il doit passer.
 
 ### 9.3 Changement de config ou de mot de passe
 
