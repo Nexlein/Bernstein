@@ -14,7 +14,7 @@
 - Only `curl` and bash (3.2+, the macOS default): nothing to install on the evaluator's machine or in CI.
 - A new connection per request is the hard case: each request goes through the Azure Load Balancer and kube-proxy to a pod, so a pod still listed while it stops would show as an error.
 - Both apps at once: a rollout of one must not disturb the other.
-- **`-- <command>` mode:** the same script serves the defense live update (#38), the AKS checks (#30) and CI on kind (#74). The 15 s after the command cover old pods still stopping: `kubectl rollout status` returns while they run their `preStop` sleep and drain ([ADR 0012](0012-graceful-shutdown.md)).
+- **`-- <command>` mode:** the same script serves the defense live update (#38), the AKS checks (#30) and CI on kind (#74): every PR runs it, with `--from cluster`, during a rollout of Poll and Result and during the drain of a worker ([ADR 0031](0031-ci-kind-e2e.md)). The 15 s after the command cover old pods still stopping: `kubectl rollout status` returns while they run their `preStop` sleep and drain ([ADR 0012](0012-graceful-shutdown.md)).
 - A check before the test fails fast if an app is already down, so the rollout is not blamed for it.
 - `GET` only: a `POST` would add fake votes, visible on Result during the defense.
 - **Requests from inside the cluster (#107):** a weak client network fails the test even at rest (Trade-offs). The pod's requests do not cross it: if they pass while the local ones fail, every request reached a pod and was served. `--from both` splits a failure live, in front of the evaluator.
