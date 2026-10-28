@@ -100,7 +100,7 @@ Détails : [`DEPLOY.md` partie 5](../../DEPLOY.md#5-roll-back), [ADR 0005](../ad
 ## 8. « Et si Redis, Postgres ou le worker tombe ? »
 
 - **Redis :** Poll non ready (page indisponible), le worker redémarre et attend. Result marche, scores figés. Les votes en file sont perdus.
-- **Postgres :** Poll marche, les votes s'empilent dans Redis (100 Mo au plus). Le worker et Result sont non ready. Au retour, le worker repart seul en ~1 min : aucun vote perdu.
+- **Postgres :** Poll marche, les votes s'empilent dans Redis (100 Mo au plus). Result s'arrête et redémarre une fois (`server.js` sort quand il perd la base), puis reste non ready ; le worker aussi. Mesuré : Result coupé 13 s si Postgres revient sur le même nœud, 43 s s'il change de nœud. Au retour, le worker repart seul en ~1 min : aucun vote perdu.
 - **Worker :** tout marche, les scores sont figés jusqu'à son retour, puis la file se vide.
 
 Démo, worker arrêté puis relancé :
