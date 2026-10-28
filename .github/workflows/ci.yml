@@ -153,3 +153,103 @@ jobs:
         run: |
           cp k8s/secrets.env.example k8s/secrets.env
           kubectl kustomize k8s/ | yq ea -o=json '[.]' | node scripts/check-baseline.mjs
+
+  # Deploys k8s/ on a throwaway Kubernetes 1.36.4 cluster (kind) and casts a vote end to end:
+  # proves the manifests run, not only that they are valid (ADR 0031). The cluster lives as long
+  # as the job, on the runner.
+  kind-e2e:
+    name: K8s on kind (deploy and vote)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # The same 3 images as the build job, kept in the local Docker for kind.
+      - name: Build poll
+        uses: docker/build-push-action@v7
+        with:
+          context: ./poll-application/poll
+          load: true
+          tags: poll:ci
+          cache-from: type=gha
+      - name: Build worker
+        uses: docker/build-push-action@v7
+        with:
+          context: ./poll-application/worker
+          load: true
+          tags: worker:ci
+          cache-from: type=gha
+      - name: Build result
+        uses: docker/build-push-action@v7
+        with:
+          context: ./poll-application/result
+          load: true
+          tags: result:ci
+          cache-from: type=gha
+
+      - name: Create the kind cluster
+        uses: helm/kind-action@v1.15.1
+        with:
+          version: v0.33.0
+          node_image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+          config: tests/kind.yaml
+          cluster_name: bernstein
+
+      # The overlay scripts/deploy.sh would generate, with the loaded images instead of a registry.
+      # A tag other than latest, so the nodes use the loaded image and pull nothing.
+      - name: Deploy k8s/
+        run: |
+          kind load docker-image poll:ci worker:ci result:ci --name bernstein
+          mkdir -p .deploy
+          cat > .deploy/kustomization.yaml <<'EOF'
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          resources:
+            - ../k8s
+          images:
+            - { name: poll, newTag: ci }
+            - { name: worker, newTag: ci }
+            - { name: result, newTag: ci }
+          EOF
+          # Throwaway passwords: the cluster is deleted with the runner.
+          printf 'POSTGRES_PASSWORD=%s\nRESULT_DB_PASSWORD=%s\nWORKER_DB_PASSWORD=%s\nREDIS_PASSWORD=\n' \
+            "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" > k8s/secrets.env
+          kubectl apply -k .deploy
+
+      - name: Wait for every workload
+        run: |
+          for resource in statefulset/postgres deployment/redis deployment/worker deployment/poll deployment/result; do
+            kubectl -n bernstein rollout status --timeout=240s "$resource"
+          done
+          kubectl -n bernstein get pods -o wide
+
+      # kind has no cloud load balancer: reach the Services through kubectl port-forward.
+      - name: Vote through Poll and find it in PostgreSQL
+        run: |
+          kubectl -n bernstein port-forward svc/poll 8080:80 >/dev/null &
+          kubectl -n bernstein port-forward svc/result 8081:80 >/dev/null &
+          curl -fsS --retry 10 --retry-connrefused --retry-delay 1 -o /dev/null -X POST -d vote=a http://localhost:8080/
+          for i in $(seq 1 30); do
+            votes=$(kubectl -n bernstein exec postgres-0 -- psql -U postgres -d postgres -tAc 'SELECT count(*) FROM votes')
+            [ "$votes" -ge 1 ] && break
+            sleep 2
+          done
+          echo "Votes in PostgreSQL: $votes"
+          [ "$votes" -ge 1 ]
+          # Result is ready only when its read-only user reaches PostgreSQL.
+          curl -fsS --retry 10 --retry-connrefused --retry-delay 1 http://localhost:8081/readyz
+          curl -fsS -o /dev/null http://localhost:8081/
+
+      - name: Show the cluster state on failure
+        if: failure()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl -n bernstein get pods,svc,pvc -o wide || true
+          kubectl -n bernstein describe pods || true
+          for app in redis worker poll result; do kubectl -n bernstein logs "deploy/$app" --tail=40 || true; done
+          kubectl -n bernstein logs postgres-0 --tail=40 || true
+          kubectl -n bernstein get events --sort-by=.lastTimestamp | tail -40 || true

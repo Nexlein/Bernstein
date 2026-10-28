@@ -32,4 +32,4 @@ redis, postgres: see `docker-compose.yml` (internal only).
 - `poll-application/worker/`: .dockerignore, Dockerfile, pom.xml
 - `poll-application/worker/src/main/java/worker/`: Worker.java
 - `scripts/`: check-baseline.mjs, codemap.mjs, deploy.sh
-- `tests/`: zero-downtime.sh
+- `tests/`: kind.yaml, zero-downtime.sh
