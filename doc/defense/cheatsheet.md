@@ -2,7 +2,7 @@
 
 Une question, la réponse en 2-3 lignes, la commande à montrer. Les explications sont dans les ADR et le [guide d'étude](k8s-study-guide.md) : ouvrir le lien si l'évaluateur creuse, ne pas réciter.
 
-Avant la soutenance : `kubectl config current-context` doit afficher `bernstein-aks`. Garder un terminal avec `kubectl -n bernstein get pods -o wide -w` ouvert. Pour prouver qu'il n'y a pas d'erreur pendant une action, la lancer sous le test de requêtes continues : `tests/zero-downtime.sh -- <commande>` ([ADR 0016](../adr/0016-zero-downtime-test.md)).
+Avant la soutenance : `kubectl config current-context` doit afficher `bernstein-aks`. Garder un terminal avec `kubectl -n bernstein get pods -o wide -w` ouvert. Pour prouver qu'il n'y a pas d'erreur pendant une action, la lancer sous le test de requêtes continues : `tests/zero-downtime.sh -- <commande>` ([ADR 0016](../adr/0016-zero-downtime-test.md)). Juste avant, `DURATION=60 tests/zero-downtime.sh`, sans rien déployer, doit afficher `PASS`. Sinon c'est la connexion de la machine, pas le cluster (mesuré : jusqu'à 1,6 % de timeouts au repos depuis une connexion domestique) : changer de connexion.
 
 ## 1. « Que se passe-t-il si on fait `kubectl drain` sur ce nœud ? »
 

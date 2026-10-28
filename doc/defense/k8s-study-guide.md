@@ -1352,6 +1352,8 @@ Chaque ancien pod passe d'abord **5 s en `preStop`** : il sort des endpoints tou
 
 **Piège** : lancer le test depuis la machine qui pousse les images fausse la mesure si le push est gros. Au premier déploiement (3 images neuves), l'upload a saturé la connexion : 2 timeouts pendant le push, aucun pendant le rollout. Une modification de code ne pousse qu'une petite couche, donc pas de souci en soutenance.
 
+**Autre piège, mesuré (#100)** : une connexion domestique faible perd des connexions même sans déploiement (0,2 à 1,6 % de timeouts au repos), alors qu'une sonde dans le cluster ne voyait aucune erreur sur 11 500 requêtes. Toujours lancer d'abord `DURATION=60 tests/zero-downtime.sh` sans rien déployer : il doit passer.
+
 ### 9.3 Changement de config ou de mot de passe
 
 On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on redéploie sans rebuild : `REGISTRY=<nom>.azurecr.io TAG=<tag actuel> scripts/deploy.sh`. Le tag actuel se lit avec `kubectl -n bernstein get deploy poll -o jsonpath='{..image}'`. `kubectl apply -k k8s/` seul remettrait des images sans registry.
