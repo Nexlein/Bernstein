@@ -74,6 +74,8 @@ flowchart TD
 
 Run the 5 services locally with Docker Compose, install the Git hooks and use the repo commands: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+How we know it works, what each test proves and does not prove, and how to rerun it: [`CONTRIBUTING.md`, Tests](CONTRIBUTING.md#tests).
+
 ---
 
 ## Roadmap & Decisions
