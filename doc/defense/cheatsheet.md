@@ -159,3 +159,14 @@ tests/zero-downtime.sh --from both -- sh -c 'kubectl -n bernstein rollout restar
 ```
 
 Détails : [ADR 0016](../adr/0016-zero-downtime-test.md), [`DEPLOY.md` partie 4](../../DEPLOY.md#4-update-the-app-with-zero-downtime).
+
+## 13. « Combien ça coûte, et comment limitez-vous ? »
+
+Mesuré dans Cost Management : 5,66 € du 19 au 28 octobre, sur un crédit étudiant de 88 €. Arrêté, le cluster coûte 0,47 € par jour : les 3 IP publiques (0,32 €), le registry (0,15 €) et le disque Postgres. Allumé, on ajoute environ 0,2 € par heure pour les 2 nœuds et leurs disques OS. Le plan Free d'AKS ne facture pas le control plane, et le load balancer est gratuit dans l'offre étudiante. On arrête donc le cluster dès qu'on ne s'en sert pas. Prévision jusqu'à la soutenance : environ 12 € au total, 14 % du crédit.
+
+```bash
+az aks stop -g bernstein-rg -n bernstein-aks
+az aks show -g bernstein-rg -n bernstein-aks --query powerState.code -o tsv   # Stopped
+```
+
+Détails : [ADR 0001, Cost](../adr/0001-aks-cluster.md#cost), [`DEPLOY.md` partie 6](../../DEPLOY.md#6-stop-or-delete-cost).
