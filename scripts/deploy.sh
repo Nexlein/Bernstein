@@ -61,9 +61,22 @@ die() {
 }
 
 step() {
+  current_step="$*"
   echo
   echo "==> $*"
 }
+
+# set -e stops the script on any failed command, even one with no `|| die` and no message.
+# Name the step and the command instead. Only the main shell reports, so a failure inside $(...)
+# prints one line, not two.
+current_step="checks"
+on_error() {
+  [ "$BASH_SUBSHELL" -eq 0 ] || return 0
+  echo >&2
+  echo "ERROR: step \"$current_step\" failed (exit $1) at scripts/deploy.sh line $2: $3" >&2
+}
+set -E
+trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 cd "$(dirname "$0")/.."
 
@@ -131,6 +144,17 @@ kubectl kustomize .deploy >/dev/null || die "kubectl kustomize .deploy failed (s
 # --- Checks that need the cluster ----------------------------------------------------
 kubectl version --request-timeout=10s >/dev/null 2>&1 ||
   die "kubectl cannot reach a cluster. Run: az aks get-credentials -g <resource-group> -n <cluster>"
+
+# Without a NetworkPolicy engine, the API server accepts k8s/network-policies.yaml and nothing
+# enforces it (ADR 0025). The app still works: a warning, repeated at the end.
+policy_warning=""
+engines=$(kubectl get daemonsets --all-namespaces -o name 2>/dev/null) || engines="?"
+case $engines in
+  "?") policy_warning="could not list the DaemonSets to check for a NetworkPolicy engine." ;;
+  *daemonset.apps/cilium* | *daemonset.apps/calico-node* | *daemonset.apps/azure-npm*) ;;
+  *) policy_warning="no NetworkPolicy engine found (Cilium, Calico or Azure NPM): k8s/network-policies.yaml is accepted but not enforced, so any pod can reach Redis and PostgreSQL. Enable one: doc/setup/cluster-setup.md, \"Enable the network policy engine\"." ;;
+esac
+[ -z "$policy_warning" ] || echo "WARNING: $policy_warning" >&2
 
 # --- Build and push only the images the registry does not have ---------------------
 image_exists() {
@@ -232,3 +256,7 @@ echo
 echo "Deployed$images."
 echo "  Poll:   http://$(ip_of poll)/"
 echo "  Result: http://$(ip_of result)/"
+if [ -n "$policy_warning" ]; then
+  echo >&2
+  echo "WARNING: $policy_warning" >&2
+fi
