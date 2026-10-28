@@ -1,6 +1,6 @@
 # Deploy Bernstein
 
-How to deploy the voting app on your own AKS cluster and private registry, from a fresh clone. Why each choice was made: [`doc/adr/`](doc/adr/README.md). Last followed end to end from a fresh clone: 2026-10-27 (#39).
+How to deploy the voting app on your own AKS cluster and private registry, from a fresh clone. Why each choice was made: [`doc/adr/`](doc/adr/README.md). Last followed end to end from a fresh clone of the Epitech mirror: 2026-10-28 (#100).
 
 0. [Get the code](#0-get-the-code).
 1. [Prerequisites](#1-prerequisites): tools, and an AKS cluster attached to a private ACR registry.
@@ -43,6 +43,7 @@ Install steps: [setup guide, prerequisites](doc/setup/cluster-setup.md#0-prerequ
   - you have a cluster but no registry: [create the registry](doc/setup/cluster-setup.md#4-create-the-private-registry-acr), then [attach it to your cluster](doc/setup/cluster-setup.md#already-have-a-cluster-attach-the-registry);
   - you have neither: follow the [setup guide](doc/setup/cluster-setup.md) from step 1.
 - Attaching needs the **Owner** role (or equivalent) on the subscription, because it creates a role assignment ([ADR 0002](doc/adr/0002-acr-registry.md)).
+- **Kubernetes 1.31 or later** on the cluster. The manifests use the `preStop` sleep action, on by default since 1.30 ([PodLifecycleSleepAction](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#PodLifecycleSleepAction)), and `matchLabelKeys` in the pod anti-affinity, on by default since 1.31 ([MatchLabelKeysInPodAffinity](https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#MatchLabelKeysInPodAffinity)). AKS offered 1.31 to 1.37 on 2026-10-28 (`az aks get-versions -l <location> -o table`); we test on 1.36.
 - A **network policy engine** on the cluster, so that `k8s/network-policies.yaml` is enforced. Without one, the policies are accepted and ignored: the app works, but any pod can reach Redis and PostgreSQL ([ADR 0025](doc/adr/0025-network-policies.md)). Check it, this must not print `none`:
 
   ```bash
@@ -108,7 +109,7 @@ In order, the script:
 4. applies `k8s/` with those images, through a generated overlay in `.deploy/`, and waits for every rollout;
 5. waits for the public IPs and prints the URLs of Poll and Result.
 
-The first run takes a few minutes (builds, first push, disk, public IPs); the next ones about a minute. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
+Measured from a fresh clone of the Epitech mirror: 2 min 11 s for the first run (base images pulled, 3 images built and pushed, disk and public IPs created); the next ones about a minute. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
 
 ### Check the deployment
 
@@ -137,6 +138,8 @@ The graded test: change the code and redeploy while the app is being requested.
    ```
 
    It requests Poll and Result continuously while the script builds, pushes and rolls out, then prints every error, or `PASS: no failed request.` ([ADR 0016](doc/adr/0016-zero-downtime-test.md)).
+
+   `kubectl` prints `statefulset.apps/postgres configured` and the PodDisruptionBudgets `configured` on every run, even when nothing changed for them. PostgreSQL is not restarted: its start time stays the same and `kubectl diff` shows no difference.
 
 3. Optional, in a second terminal: `kubectl -n bernstein get pods -w` shows the pods replaced one at a time.
 4. Reload the Poll page: the new title shows, and "Processed by container ID" names the pod that answered.
@@ -247,4 +250,4 @@ Restore it. This replaces the `votes` table with the content of the dump:
 kubectl -n bernstein exec -i postgres-0 -- psql -q -U postgres -d postgres < ~/votes-backup.sql
 ```
 
-Tested on AKS: a dump of 6195 votes, restored into a scratch database, gave the same rows and the same checksum.
+Tested on AKS: a dump of 6195 votes, restored into a scratch database, gave the same rows and the same checksum. On the live database (2026-10-28): 25 votes, then a restore of a dump taken at 20, gave exactly those 20. `psql` prints one `set_config` line: that is expected.
