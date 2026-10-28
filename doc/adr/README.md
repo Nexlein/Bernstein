@@ -43,6 +43,7 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 | [0030](0030-baseline-rules-check.md)         | CI rules           | Node script: resources, non-root, rollout, 2+ pods, probes, PDBs, Service types      | How do you keep the baseline rules from being dropped?                                    |
 | [0031](0031-ci-kind-e2e.md)                  | CI end-to-end      | kind cluster (1.36.4, 2 workers) per PR: deploy `k8s/`, vote through Poll            | How do you know the manifests actually run?                                               |
 | [0032](0032-ci-registry-oidc.md)             | CI registry login  | Azure OIDC: federated credential, `AcrPush` only, no password in GitHub              | How does CI log in to a private registry without a stored secret?                         |
+| [0033](0033-ci-image-scan.md)                | CI image scan      | Trivy on the 5 images; fails on a fixable CRITICAL, accepted ones in an ignore file  | How do you avoid shipping known vulnerabilities? Why this threshold?                      |
 
 ## By file
 
@@ -62,9 +63,10 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 | `k8s/network-policies.yaml`           | [0025](0025-network-policies.md)                                                                                                                                                                                                                                                                         |
 | `scripts/deploy.sh`                   | [0005](0005-image-tags-git-sha.md), [0017](0017-deploy-script.md)                                                                                                                                                                                                                                        |
 | `tests/zero-downtime.sh`              | [0016](0016-zero-downtime-test.md)                                                                                                                                                                                                                                                                       |
-| `.github/workflows/ci.yml`            | [0029](0029-manifest-schema-validation.md), [0030](0030-baseline-rules-check.md), [0031](0031-ci-kind-e2e.md), [0032](0032-ci-registry-oidc.md)                                                                                                                                                          |
+| `.github/workflows/ci.yml`            | [0029](0029-manifest-schema-validation.md), [0030](0030-baseline-rules-check.md), [0031](0031-ci-kind-e2e.md), [0032](0032-ci-registry-oidc.md), [0033](0033-ci-image-scan.md)                                                                                                                           |
 | `scripts/check-baseline.mjs`          | [0030](0030-baseline-rules-check.md)                                                                                                                                                                                                                                                                     |
 | `tests/kind.yaml`                     | [0031](0031-ci-kind-e2e.md)                                                                                                                                                                                                                                                                              |
+| `.trivyignore.yaml`                   | [0033](0033-ci-image-scan.md)                                                                                                                                                                                                                                                                            |
 
 ## Known limits
 

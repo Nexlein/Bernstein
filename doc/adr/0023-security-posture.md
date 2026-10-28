@@ -15,6 +15,7 @@ We harden what runs in the cluster, and keep the cluster-level defaults of a stu
 - **Network:** default deny in the namespace, in and out; only the app's flows are allowed, enforced by Cilium ([ADR 0025](0025-network-policies.md)). Checked: a Poll pod reaches Redis, but not PostgreSQL or the internet.
 - **Node updates on our schedule:** node image updates and AKS releases may only start on Sunday from 03:00 to 07:00, Paris time (`aksManagedNodeOSUpgradeSchedule` and `default` maintenance windows, set on 2026-10-28). Our cluster is stopped at that hour, so AKS does not reimage the nodes while we work. Before the defense, a newer node image is applied by hand, under `tests/zero-downtime.sh` (#100). **Fact:** if the cluster is stopped when the window starts, no operation runs; windows are best effort, and AKS can break them for urgent maintenance. ([Microsoft Learn: Planned maintenance](https://learn.microsoft.com/en-us/azure/aks/planned-maintenance))
 - **Resources:** every container has CPU and memory limits, so one runaway container cannot starve a node ([ADR 0018](0018-resource-requests-and-limits.md)).
+- **Known vulnerabilities (#77):** CI scans the 5 images with Trivy and fails on a CRITICAL vulnerability that has a fix, unless `.trivyignore.yaml` accepts it with a reason ([ADR 0033](0033-ci-image-scan.md)). First scan, 2026-10-28: none in our 3 images and Redis; 3 in PostgreSQL, accepted (2 in `gosu`, never executed; 1 until the official image is rebuilt).
 
 ## Known limits
 
@@ -23,7 +24,7 @@ We harden what runs in the cluster, and keep the cluster-level defaults of a stu
 | The Kubernetes API server is public, with no authorized IP ranges (authentication still required) | `az aks show --query apiServerAccessProfile`: `null`                  | authorized IP ranges, or a private cluster        |
 | Local accounts enabled, no Microsoft Entra ID integration (Kubernetes RBAC only)                  | `disableLocalAccounts: false`, `aadProfile: null`, `enableRbac: true` | Entra ID with Azure RBAC, local accounts disabled |
 | Secrets are only base64 in the API; no KMS encryption layer                                       | `securityProfile.azureKeyVaultKms: null`                              | KMS encryption with keys in Azure Key Vault       |
-| No vulnerability scan of the images                                                               | no scan step in CI                                                    | a scan in CI that fails on critical issues (#77)  |
+| Images scanned when CI runs, not again in the registry when a new CVE comes out                   | [ADR 0033](0033-ci-image-scan.md): on push and PR only                | Defender for Containers, or a nightly scan        |
 | No automatic Kubernetes version upgrade (node images: weekly, in our maintenance window)          | `upgradeChannel: null`, `nodeOsUpgradeChannel: NodeImage`             | the `patch` upgrade channel in the same window    |
 | HTTP only                                                                                         | [ADR 0022](0022-no-https.md)                                          | HTTPS                                             |
 

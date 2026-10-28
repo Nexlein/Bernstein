@@ -183,3 +183,19 @@ az ad app federated-credential list --id <AZURE_CLIENT_ID> --query '[].subject' 
 ```
 
 Détails : [ADR 0032](../adr/0032-ci-registry-oidc.md), [mise en place](../setup/cluster-setup.md#8-build-push-and-deploy).
+
+## 15. « Vos images ont-elles des failles connues ? »
+
+La CI scanne les 5 images avec Trivy à chaque push et chaque PR : nos 3 images, plus Postgres et Redis au digest qu'on déploie. Elle échoue sur une faille `CRITICAL` qui a un correctif, puisqu'il suffit alors de monter de version. Les `HIGH` et les `CRITICAL` sans correctif sont seulement affichées dans le résumé du job : les bloquer laisserait la CI rouge sans rien à corriger. Premier scan : aucune faille bloquante dans nos images ni dans Redis. Postgres en a 3, et la dernière image officielle est déjà la nôtre. On les accepte dans `.trivyignore.yaml`, chacune avec sa raison : 2 dans `gosu`, qui ne tourne que si le conteneur démarre en root (le nôtre tourne en UID 70), et 1 qui expire le 30 novembre, le temps que l'image officielle soit reconstruite. On utilise le binaire Trivy vérifié par checksum, pas l'action GitHub : ses tags ont été piratés en mars 2026.
+
+```bash
+trivy image --severity CRITICAL --ignore-unfixed --ignorefile .trivyignore.yaml postgres:18.6-alpine
+```
+
+Détails : [ADR 0033](../adr/0033-ci-image-scan.md), [ADR 0023](../adr/0023-security-posture.md).
+
+## 16. « Comment savez-vous que ça marche ? »
+
+On teste notre déploiement, pas le code fourni : l'app arrive sans tests, et c'est le déploiement qui est noté. Chaque PR passe 7 vérifications en CI. Les plus parlantes : la stack Compose avec un vote de bout en bout, et un vrai cluster Kubernetes 1.36.4 (kind) où l'on déploie `k8s/`, vote, puis fait un rollout et un drain sous `tests/zero-downtime.sh`, avec 0 erreur exigée. Sur AKS, on a mesuré à la main ce que kind ne couvre pas : 0 erreur sur 975 et 1996 requêtes pendant un rollout, 0 sur 2221 pendant un drain. Les coupures connues viennent toutes de Postgres, qui n'a qu'un réplica : par exemple Result tombe 39 s quand on draine le nœud de Postgres. Chaque test dit aussi ce qu'il ne prouve pas.
+
+Détails : [`CONTRIBUTING.md`, Tests](../../CONTRIBUTING.md#tests), [ADR 0031](../adr/0031-ci-kind-e2e.md).

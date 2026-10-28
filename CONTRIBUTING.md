@@ -1,6 +1,6 @@
 # Contributing
 
-Local development of Bernstein: run the 5 services with Docker Compose, and the repo tooling. Kubernetes deployment: [`README.md`](README.md).
+Local development of Bernstein: run the 5 services with Docker Compose, the repo tooling, and the [tests](#tests). Kubernetes deployment: [`README.md`](README.md).
 
 ## 1. Prerequisites
 
@@ -34,19 +34,9 @@ Optional: Compose sets `POSTGRES_PASSWORD=postgres` by default. To change it, ru
 - **Poll Web UI**: [http://localhost:5000](http://localhost:5000)
 - **Result Web UI**: [http://localhost:5001](http://localhost:5001)
 
-## 4. Verify Health Probes
+Check the probes and a vote: [Tests, local stack](#local-stack-docker-compose).
 
-```bash
-# Poll probes
-curl http://localhost:5000/healthz   # 200 OK
-curl http://localhost:5000/readyz    # 200 OK if Redis is up
-
-# Result probes
-curl http://localhost:5001/healthz   # 200 OK
-curl http://localhost:5001/readyz    # 200 OK if PostgreSQL is up
-```
-
-## 5. Tear Down
+## 4. Tear Down
 
 ```bash
 docker compose down -v
@@ -54,14 +44,84 @@ docker compose down -v
 
 ## Development & CI/CD Commands
 
-| Command                                                                               | Action                                                                                                                                                              |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run codemap`                                                                     | Regenerates `.claude/codemap.md` (services, routes, env vars, file tree).                                                                                           |
-| `npm run format:check`                                                                | Checks code and markdown formatting across the entire repo.                                                                                                         |
-| `npm run format`                                                                      | Automatically formats all code, manifests, and documentation with Prettier.                                                                                         |
-| `docker compose config`                                                               | Validates local Docker Compose file syntax.                                                                                                                         |
-| `tests/zero-downtime.sh -- <command>`                                                 | Requests Poll and Result while `<command>` updates them; fails on any error. `--from both` also requests them from a pod in the cluster. `--help` for usage.        |
-| `kubectl kustomize k8s/ \| kubeconform -strict -summary -kubernetes-version 1.36.4 -` | Validates every rendered object against the Kubernetes schema, as CI does (needs [kubeconform](https://github.com/yannh/kubeconform) v0.8.0 and `k8s/secrets.env`). |
+| Command                 | Action                                                                      |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `npm run codemap`       | Regenerates `.claude/codemap.md` (services, routes, env vars, file tree).   |
+| `npm run format:check`  | Checks code and markdown formatting across the entire repo.                 |
+| `npm run format`        | Automatically formats all code, manifests, and documentation with Prettier. |
+| `docker compose config` | Validates local Docker Compose file syntax.                                 |
+
+## Tests
+
+We test **our Kubernetes deployment, not the provided application code.** The subject supplies Poll, the worker and Result with their source and Dockerfiles, and grades the deployment: build, private registry, cluster, public access, updates with no error. So every check treats the apps as black boxes, through their HTTP endpoints, probes and votes. The apps come with no tests, and we add none to code we did not write.
+
+Every pull request runs the CI checks (`.github/workflows/ci.yml`). The AKS checks are run by hand on our cluster; their results are below, with the ADR that holds the details.
+
+### What is tested where
+
+| Check                                                          | Where        | Proves                                                                                                                                   | Does not prove                                                                |
+| -------------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Formatting and repository](#formatting-and-repository-checks) | CI, local    | Files formatted, codemap up to date, shell scripts clean for shellcheck, Compose file valid, `k8s/schema.sql` equal to the app's         | That anything runs                                                            |
+| [Image builds](#image-builds)                                  | CI, local    | The 3 Dockerfiles build                                                                                                                  | That the images start                                                         |
+| [Vulnerability scan](#vulnerability-scan)                      | CI, local    | No fixable `CRITICAL` vulnerability in the 5 images, apart from the accepted ones                                                        | Anything on `HIGH` or unfixed ones; images already deployed are not rescanned |
+| [Local stack](#local-stack-docker-compose)                     | CI, local    | The 5 services start, their probes answer, a vote reaches PostgreSQL                                                                     | Anything about Kubernetes                                                     |
+| [Manifests](#manifests-build-and-schema)                       | CI, local    | `k8s/` renders, and every object matches the Kubernetes 1.36.4 and 1.31 schemas                                                          | That the values are right, or that the pods start                             |
+| [Baseline rules](#baseline-rules-checked-in-ci)                | CI, local    | Our rules: resources, non-root, rollout strategy, 2+ pods, probes, PDBs, public Services                                                 | That the probes pass, or that a rollout has no error                          |
+| [kind](#end-to-end-test-on-kind)                               | CI, local    | `k8s/` deploys on Kubernetes 1.36.4 with its NetworkPolicies enforced, a vote goes through, 0 errors during a rollout and during a drain | Azure: load balancer, disk, Cilium; a drain of PostgreSQL's node              |
+| [Zero downtime on AKS](#zero-downtime-on-aks)                  | AKS, by hand | The graded test: 0 errors while an update rolls out, through the public IPs and from inside the cluster                                  | Drains and PostgreSQL restarts (next row)                                     |
+| [Manual checks on AKS](#manual-checks-on-aks)                  | AKS, by hand | Drains, PostgreSQL restarts, public ports, database rights, NetworkPolicies, Pod Security                                                | They were measured once: run them again after a change that touches them      |
+
+### Formatting and repository checks
+
+The CI job "Code Style & Config Validation", which also runs the [manifest checks](#manifests-build-and-schema). Locally:
+
+```bash
+npm run format:check
+npm run codemap && git diff --exit-code .claude/codemap.md
+git ls-files -z '*.sh' | xargs -0 -r shellcheck
+docker compose config --quiet
+diff poll-application/schema.sql k8s/schema.sql
+```
+
+### Image builds
+
+The CI job "Build Container Images" builds Poll, the worker and Result, without pushing them. Locally, all 3 with `docker compose build`, or one:
+
+```bash
+docker build -t bernstein-poll:test poll-application/poll
+```
+
+### Vulnerability scan
+
+The CI job "Image Vulnerability Scan" scans our 3 images, PostgreSQL and Redis with [Trivy](https://trivy.dev/) 0.76.1. It fails on a `CRITICAL` vulnerability that has a fix, unless `.trivyignore.yaml` accepts it with a reason; the counts and the full list are in the job summary ([ADR 0033](doc/adr/0033-ci-image-scan.md)). The same scan of one local image:
+
+```bash
+trivy image --scanners vuln --severity HIGH,CRITICAL --ignorefile .trivyignore.yaml poll:latest
+```
+
+When it fails: update the base image or the dependency. If no fixed image exists yet, or the vulnerable code never runs in our pods, add an entry to `.trivyignore.yaml` with a `statement`, and an `expired_at` date when a fix is coming.
+
+### Local stack (Docker Compose)
+
+The CI job "Full Stack Integration & Probe Verification" starts the 5 services with Compose, checks the probes of Poll and Result, casts a vote and finds it in PostgreSQL. The same by hand, with the stack of [section 3](#3-launch-local-multi-service-stack) running:
+
+```bash
+curl http://localhost:5000/healthz   # Poll: 200 OK
+curl http://localhost:5000/readyz    # Poll: 200 OK if Redis is up
+curl http://localhost:5001/healthz   # Result: 200 OK
+curl http://localhost:5001/readyz    # Result: 200 OK if PostgreSQL is up
+curl -X POST -d vote=a http://localhost:5000/
+docker compose exec -T postgres psql -U postgres -d postgres -tAc 'SELECT count(*) FROM votes'   # 1 or more
+```
+
+### Manifests: build and schema
+
+Two steps of "Code Style & Config Validation". The first renders `k8s/` as `kubectl apply -k` would. The second checks every rendered object with kubeconform `-strict`, unknown fields refused, against Kubernetes 1.36.4 (our AKS) and 1.31.0 (the minimum `DEPLOY.md` asks for) ([ADR 0029](doc/adr/0029-manifest-schema-validation.md)). Locally, with `k8s/secrets.env` and [kubeconform](https://github.com/yannh/kubeconform) v0.8.0:
+
+```bash
+kubectl kustomize k8s/ > /dev/null
+kubectl kustomize k8s/ | kubeconform -strict -summary -kubernetes-version 1.36.4 -
+```
 
 ### Baseline rules checked in CI
 
@@ -91,3 +151,34 @@ kind delete cluster --name bernstein
 ```
 
 Then follow the steps of the `kind-e2e` job in `.github/workflows/ci.yml`: build the 3 images as `poll:ci`, `worker:ci` and `result:ci`, `kind load docker-image` them, and apply the overlay.
+
+### Zero downtime on AKS
+
+`tests/zero-downtime.sh` requests Poll and Result in loops, a new connection per request with a 5 s timeout, while a command updates them, and fails on any error ([ADR 0016](doc/adr/0016-zero-downtime-test.md)). `--from cluster` sends the requests from a pod in the cluster, `--from both` from your machine and that pod; `--help` for the rest. The update of the defense ([`DEPLOY.md` part 4](DEPLOY.md#4-update-the-app-with-zero-downtime)), and a restart of Poll and Result:
+
+```bash
+REGISTRY=<name>.azurecr.io tests/zero-downtime.sh --from both -- scripts/deploy.sh
+tests/zero-downtime.sh --from both -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll deploy/result'
+```
+
+Measured on AKS:
+
+- `rollout restart` of Poll and Result: 0 errors in 975 requests (2 loops per app) and in 1996 (4 loops); with `--from both`, 0 in 994 from the machine and 2375 from the pod ([ADR 0016](doc/adr/0016-zero-downtime-test.md)).
+- `scripts/deploy.sh` rolling a new Poll: 0 errors in 1363 requests from the machine and 3080 from the pod ([ADR 0017](doc/adr/0017-deploy-script.md)).
+- Rollbacks (`rollout undo`, an older `TAG` or `POLL_TAG`) and broken updates (missing tag, crash at start, Redis unreachable): 0 errors ([`DEPLOY.md` part 5](DEPLOY.md#5-roll-back)).
+
+### Manual checks on AKS
+
+Run on `bernstein-aks` under continuous requests, once each.
+
+| Check                                                                | Result                                                                                                   | Details                                                                                                |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `kubectl drain` of the node with one Poll, one Result and the worker | 0 errors in 2221 requests                                                                                | [ADR 0014](doc/adr/0014-pod-disruption-budgets.md)                                                     |
+| `kubectl drain` of the node that also runs PostgreSQL and Redis      | Poll: 0 errors. Result: 47 failed requests over 39 s, while the disk moves (1 PostgreSQL replica)        | [ADR 0014](doc/adr/0014-pod-disruption-budgets.md), [ADR 0007](doc/adr/0007-postgres-statefulset.md)   |
+| `kubectl delete pod postgres-0`                                      | Same node: back in 8 s, Result ready 13 s after. Other node: back in 27 s, Result down 38 to 43 s        | [ADR 0008](doc/adr/0008-result-deployment.md)                                                          |
+| The worker after a PostgreSQL restart, no vote sent                  | Restarted by its liveness probe, `1/1` again at 66 s                                                     | [ADR 0010](doc/adr/0010-worker-deployment.md), [guide](doc/defense/k8s-study-guide.md#les-probes-http) |
+| Public IPs, from the internet                                        | Port 80 answers; 22, 443, 5432 and 6379 are closed                                                       | [ADR 0023](doc/adr/0023-security-posture.md)                                                           |
+| Database rights, from a Result pod                                   | `INSERT` and `DELETE`: `permission denied for table votes`; `DROP TABLE`: `must be owner of table votes` | [ADR 0023](doc/adr/0023-security-posture.md)                                                           |
+| NetworkPolicies, from a Poll pod                                     | Reaches Redis, not PostgreSQL or the internet                                                            | [ADR 0023](doc/adr/0023-security-posture.md), [ADR 0025](doc/adr/0025-network-policies.md)             |
+| A pod with `runAsUser: 0`                                            | Refused: `violates PodSecurity "restricted:latest"`                                                      | [ADR 0027](doc/adr/0027-pod-security-standards.md)                                                     |
+| Spreading the pods after `az aks start`                              | One Poll and one Result per node, 0 errors in 1280 requests from the machine and 2765 from the pod       | [`DEPLOY.md`, After `az aks start`](DEPLOY.md#after-az-aks-start)                                      |
