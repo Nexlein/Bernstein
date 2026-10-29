@@ -246,6 +246,28 @@ gh secret set ACR_NAME --repo "$REPO" --body "$ACR"
 
 Stop the nodes when idle, delete the app or everything after the defense: [`DEPLOY.md`](../../DEPLOY.md#6-stop-or-delete-cost).
 
+### (Optional) Stop the cluster every night from GitHub Actions
+
+The workflow `.github/workflows/nightly-stop.yml` stops the cluster at 23:00, Paris time, when it is still running ([ADR 0035](../adr/0035-nightly-stop.md)). It uses the CI app of [section 8](#optional-log-github-ci-in-to-the-registry-oidc), which needs one more role, limited to reading and stopping the cluster. Run by the owner of the subscription, with `APP_ID` as in section 8:
+
+```bash
+cat > aks-stop-role.json <<EOF
+{
+  "Name": "Bernstein AKS Stopper",
+  "Description": "Read and stop the Bernstein AKS cluster: nightly stop from GitHub Actions (#110).",
+  "Actions": [
+    "Microsoft.ContainerService/managedClusters/read",
+    "Microsoft.ContainerService/managedClusters/stop/action"
+  ],
+  "AssignableScopes": ["$(az group show -n "$RG" --query id -o tsv)"]
+}
+EOF
+az role definition create --role-definition aks-stop-role.json
+az role assignment create --assignee "$APP_ID" --role "Bernstein AKS Stopper" --scope "$(az aks show -g "$RG" -n "$AKS" --query id -o tsv)"
+```
+
+If the assignment says the role does not exist, Azure has not spread the new role yet: wait a minute or two and run the last line again. Then run the workflow once by hand: `gh workflow run nightly-stop.yml`, with the cluster running; its log ends with the power state `Stopped`. In a fork, change the repository name in the job's `if:`, and the resource group and cluster names in its `env:`.
+
 ---
 
 ## Troubleshooting

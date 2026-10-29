@@ -226,7 +226,7 @@ The external `tests/zero-downtime.sh` run at the same time logged 0.3 to 1.2 % t
 
 ## 6. Stop or delete (cost)
 
-Stop the nodes when nobody uses the app. Everything is kept. Measured on our subscription ([ADR 0001](doc/adr/0001-aks-cluster.md#cost)): **0.47 € a day stopped**, plus **about 0.2 € per hour running** (the nodes and their OS disks). Stopped, the 3 public IPs (0.32 € a day), the registry (0.15 €) and the PostgreSQL disk are still billed; the load balancer is free within the Azure for Students offer.
+Stop the nodes when nobody uses the app. Everything is kept. Measured on our subscription ([ADR 0001](doc/adr/0001-aks-cluster.md#cost)): **0.47 € a day stopped**, plus **about 0.2 € per hour running** (the nodes and their OS disks). Stopped, the 3 public IPs (0.32 € a day), the registry (0.15 €) and the PostgreSQL disk are still billed; the load balancer is free within the Azure for Students offer. On our repository, GitHub Actions also stops the cluster every night at 23:00, Paris time, if it is still running ([ADR 0035](doc/adr/0035-nightly-stop.md)).
 
 ```bash
 az aks stop  -g <resource-group> -n <cluster>   # nodes off, compute not billed

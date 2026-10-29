@@ -1,6 +1,6 @@
 # ADR 0001: Kubernetes cluster on AKS
 
-**Status:** Accepted · **Date:** 2026-10-19 · **Issues:** #8, #9, #102
+**Status:** Accepted · **Date:** 2026-10-19 · **Issues:** #8, #9, #102, #110
 
 ## Decision
 
@@ -40,6 +40,7 @@ AKS cluster `bernstein-aks`, Free tier, in `spaincentral`, with **2 `Standard_B2
 - **Per day:** stopped, **0.47 €** (2026-10-22 to 2026-10-25, all four days the same: IPs 0.32, registry 0.15, PostgreSQL disk 0.01). Running adds the nodes and their OS disks, **about 0.2 € per hour**: 0.18 over the whole period, 0.24 on 2026-10-27. A full day running would cost about 5 €.
 - **The load balancer is free here:** its rules ran 209 hours at 0 €, and the subscription overview counts them among the student offer's free services (750 hours a month). The PostgreSQL disk and the OS disks follow list prices: P10 19.08 € and E1 0.26 € a month, nodes 0.0803 € an hour ([Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices); [Microsoft Learn: AKS storage concepts](https://learn.microsoft.com/en-us/azure/aks/concepts-storage) for the default disks).
 - **Stopping works:** no node or OS disk cost on the stopped days. What stays is mostly the 3 public IPs, two thirds of the stopped cost. Deleting the namespace would free 2 of them (0.21 € a day) but loses the votes and the IPs: not worth it.
+- **Stopped every night (#110):** a GitHub Actions workflow stops the cluster at 23:00, Paris time, if it is still running ([ADR 0035](0035-nightly-stop.md)). A cluster forgotten in the evening runs until 23:00 at most, not through the night (about 0.2 € an hour).
 - **Credit:** **Fact:** Azure for Students gives a $100 credit for 12 months; once it is used, the subscription's products are disabled. ([Azure for Students](https://azure.microsoft.com/en-us/free/students/)) Our Education Hub shows **88 €**, valid until 2027-10-19. It still shows 88 € available and 0 € of October costs: it lags behind Cost Management. The portal forecasts 7.45 € for October.
 - **Until the defense** (about 2026-11-04): 7 more days, stopped except about 10 hours, add about 6 €. About **12 € in total, 14 % of the credit.**
 
