@@ -418,3 +418,33 @@ jobs:
             echo "::error::$fixable CRITICAL vulnerabilities have a fix: update the base image or the dependency."
             exit 1
           fi
+
+  # Pushes main's images to our registry (ADR 0034), with the tags scripts/deploy.sh deploys: an
+  # app gets a new image only when its code changed. After the tests, so only code that passed
+  # them on main is published. On a push to main, in this repository only.
+  publish:
+    name: Publish Images (main)
+    if: github.event_name == 'push' && github.repository == 'Nexlein/Bernstein'
+    needs: [registry-login, integration-test, kind-e2e, image-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # The full history: each app's tag is the last commit that changed its folder.
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Log in to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push the new images
+        env:
+          REGISTRY: ${{ secrets.ACR_NAME }}.azurecr.io
+        run: scripts/deploy.sh --push-only

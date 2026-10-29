@@ -1,6 +1,6 @@
 # ADR 0017: One-command deploy script with a generated overlay
 
-**Status:** Accepted · **Date:** 2026-10-27 · **Issues:** #36, #38, #108, #106, #99
+**Status:** Accepted · **Date:** 2026-10-27 · **Issues:** #36, #38, #108, #106, #99, #12
 
 ## Decision
 
@@ -60,11 +60,11 @@ A rollout with no new Ready pod for 2 minutes fails (`progressDeadlineSeconds: 1
 - **`sed` on the manifests or the rendered YAML:** fragile text replacement.
 - **Makefile (`make deploy`):** one more tool and syntax around the same shell logic (checks, loops, messages).
 - **`az acr build` (build in Azure):** no local Docker and native amd64, but it adds ACR Tasks, one more Azure service to enable and pay on the evaluator's subscription. Not tried.
-- **Deploy from CI on push:** CI will build and push (#12), but deploying from it needs the evaluator's cluster credentials in GitHub. The evaluator deploys from their own machine.
+- **Deploy from CI on push:** CI builds and pushes on `main` ([ADR 0034](0034-ci-publish-images.md)), but deploying from it needs the evaluator's cluster credentials in GitHub. The evaluator deploys from their own machine.
 - **Helm:** see [ADR 0003](0003-kustomize.md).
 - **Automatic `rollout undo` when a rollout fails:** it would hide the cause, and it undoes one Deployment while a run changes the 3 apps' tag. The old pods already keep the app up.
 - **Argo Rollouts or Flagger (analysis, automatic rollback):** one more controller to install and explain, for a decision the operator takes in one command here ([ADR 0020](0020-no-gitops.md)).
 
 ## Revisit if
 
-CI (#12) needs the same build and push: share that part of the script instead of copying it.
+CI (#12) needs the same build and push: share that part of the script instead of copying it. Done: CI runs `scripts/deploy.sh --push-only`, which stops after the push ([ADR 0034](0034-ci-publish-images.md)).
