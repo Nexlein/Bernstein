@@ -4,7 +4,7 @@
 
 ## Decision
 
-The CI job "Registry Login (Azure OIDC)" logs in to our registry with no password stored in GitHub. The Entra app `bernstein-github-ci` has the role `AcrPush` on the registry only, and 2 federated credentials: `repo:Nexlein@183351649/Bernstein@1418620429:ref:refs/heads/main` (pushes to `main`) and `repo:Nexlein@183351649/Bernstein@1418620429:pull_request` (pull requests). The job asks GitHub for an OIDC token (`id-token: write`), exchanges it through `azure/login@v3`, then runs `az acr login`. The 4 GitHub secrets it reads are identifiers: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ACR_NAME`. It does not push yet: building and pushing on `main` is #12. Setup: [cluster-setup.md §8](../setup/cluster-setup.md#8-build-push-and-deploy).
+The CI job "Registry Login (Azure OIDC)" logs in to our registry with no password stored in GitHub. The Entra app `bernstein-github-ci` has the role `AcrPush` on the registry only, and 2 federated credentials: `repo:Nexlein@183351649/Bernstein@1418620429:ref:refs/heads/main` (pushes to `main`) and `repo:Nexlein@183351649/Bernstein@1418620429:pull_request` (pull requests). The job asks GitHub for an OIDC token (`id-token: write`), exchanges it through `azure/login@v3`, then runs `az acr login`. The 4 GitHub secrets it reads are identifiers: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ACR_NAME`. It does not push: on `main`, the job "Publish Images (main)" logs in the same way, after the tests, and pushes ([ADR 0034](0034-ci-publish-images.md)). Setup: [cluster-setup.md §8](../setup/cluster-setup.md#8-build-push-and-deploy).
 
 ## Why
 
