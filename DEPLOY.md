@@ -161,6 +161,8 @@ If it fails, the network between your machine and Azure drops connections, and t
 
 Measured on AKS: only Poll rebuilt and rolled, the script took 34 s (52 s when the 3 apps rolled), 0 errors in 1363 requests from the client and 3080 from inside the cluster ([ADR 0017](doc/adr/0017-deploy-script.md)). Run the test from a machine whose connection is not busy: a big push (first deploy, all layers new) or another download slows down the test's own requests ([troubleshooting](#7-troubleshooting)).
 
+On our repository, CI also pushes the images of every commit merged into `main`, after its tests, with the same tags (`scripts/deploy.sh --push-only`, [ADR 0034](doc/adr/0034-ci-publish-images.md)). A deploy of `main` then finds its images in our registry and goes straight to the rollout, with no build or upload. It changes nothing for another registry: there, `scripts/deploy.sh` builds and pushes as above.
+
 ### Update Redis or PostgreSQL
 
 Their images are pinned by version and digest in `k8s/redis.yaml`, `k8s/postgres.yaml` and `docker-compose.yml`: a new node pulls the same image, and a version changes only through a commit ([ADR 0007](doc/adr/0007-postgres-statefulset.md)). Dependabot opens a pull request when a newer minor or patch version is out. By hand, read the digest of the new tag, then put `<tag>@<digest>` in the manifest and in `docker-compose.yml`:
