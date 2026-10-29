@@ -276,6 +276,50 @@ jobs:
           kubectl -n bernstein logs postgres-0 --tail=40 || true
           kubectl -n bernstein get events --sort-by=.lastTimestamp | tail -40 || true
 
+  # Logs in to our private registry without a stored password (ADR 0032): GitHub gives the job a
+  # short-lived OIDC token, which Entra ID trusts through a federated credential of our CI app
+  # (role AcrPush on the registry). Only in this repository, on a push or a PR from one of its
+  # branches: the Epitech mirror, forks and fork PRs have neither the secrets nor the token.
+  registry-login:
+    name: Registry Login (Azure OIDC)
+    if: >-
+      github.repository == 'Nexlein/Bernstein' &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check the Azure secrets
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+        shell: bash
+        run: |
+          missing=""
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID ACR_NAME; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing GitHub secret(s):$missing. How to set them: doc/setup/cluster-setup.md, section 8."
+            exit 1
+          fi
+
+      - name: Log in to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Docker login to <name>.azurecr.io with an Entra token, valid about 3 hours.
+      - name: Log in to the registry
+        env:
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+        run: az acr login --name "$ACR_NAME"
+
   # Known vulnerabilities in the 5 images we run (ADR 0033): the 3 we build, and PostgreSQL and
   # Redis at the digests k8s/ pins. Fails only on a CRITICAL one that has a fix and is not
   # accepted in .trivyignore.yaml; the others go to the job summary. The Trivy binary, pinned and

@@ -174,6 +174,16 @@ az aks show -g bernstein-rg -n bernstein-aks --query powerState.code -o tsv   # 
 
 Détails : [ADR 0001, Cost](../adr/0001-aks-cluster.md#cost), [`DEPLOY.md` partie 6](../../DEPLOY.md#6-stop-or-delete-cost).
 
+## 14. « Comment la CI se connecte au registry privé, sans secret ? »
+
+Par OIDC, sans aucun mot de passe dans GitHub. Pour chaque job, GitHub signe un token qui dit « dépôt `Nexlein/Bernstein`, branche `main` » (ou « pull request »), avec les ID du compte et du dépôt : un nouveau dépôt du même nom n'aurait pas les mêmes ID, donc aucun accès. Entra ID lui fait confiance grâce à une federated credential de l'app `bernstein-github-ci`, et rend un token Azure qui expire avec le job. Cette app n'a qu'un rôle : `AcrPush` sur le registry, aucun droit sur le cluster. Les 4 secrets GitHub ne sont que des identifiants (client, tenant, subscription, nom du registry) : volés, ils ne donnent accès à rien. Un fork ou le miroir Epitech ne reçoit ni les secrets ni le token, donc le job y est sauté.
+
+```bash
+az ad app federated-credential list --id <AZURE_CLIENT_ID> --query '[].subject'   # repo:Nexlein@183351649/Bernstein@1418620429:… main et pull_request
+```
+
+Détails : [ADR 0032](../adr/0032-ci-registry-oidc.md), [mise en place](../setup/cluster-setup.md#8-build-push-and-deploy).
+
 ## 15. « Vos images ont-elles des failles connues ? »
 
 La CI scanne les 5 images avec Trivy à chaque push et chaque PR : nos 3 images, plus Postgres et Redis au digest qu'on déploie. Elle échoue sur une faille `CRITICAL` qui a un correctif, puisqu'il suffit alors de monter de version. Les `HIGH` et les `CRITICAL` sans correctif sont seulement affichées dans le résumé du job : les bloquer laisserait la CI rouge sans rien à corriger. Premier scan : aucune faille bloquante dans nos images ni dans Redis. Postgres en a 3, et la dernière image officielle est déjà la nôtre. On les accepte dans `.trivyignore.yaml`, chacune avec sa raison : 2 dans `gosu`, qui ne tourne que si le conteneur démarre en root (le nôtre tourne en UID 70), et 1 qui expire le 30 novembre, le temps que l'image officielle soit reconstruite. On utilise le binaire Trivy vérifié par checksum, pas l'action GitHub : ses tags ont été piratés en mars 2026.
