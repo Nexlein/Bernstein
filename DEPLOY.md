@@ -252,9 +252,10 @@ kubectl delete namespace bernstein
 
 It saves little (the 2 public IPs of Poll and Result, 0.21 € a day), and **it deletes the votes:** the PostgreSQL disk goes with its PVC (`reclaimPolicy: Delete`, [ADR 0007](doc/adr/0007-postgres-statefulset.md)). The next deploy starts with an empty database, and gets new public IPs: deleting the Services released the old ones (seen in #39).
 
-Delete everything, after the defense:
+Delete everything, after the defense. On our repository, first turn off the nightly stop, whose next run would fail on a missing cluster ([ADR 0035](doc/adr/0035-nightly-stop.md)):
 
 ```bash
+gh workflow disable nightly-stop.yml            # our repository only
 az group delete --name <resource-group> --yes   # every resource in the group: cluster, registry, disks, IPs
 ```
 
