@@ -1,0 +1,51 @@
+name: Nightly Stop
+
+# Stops our AKS cluster every night, so a cluster left running does not burn the Azure credit
+# (ADR 0035). Our cluster only: the evaluator's is not ours to stop. Disable this workflow after
+# the defense (#42).
+on:
+  schedule:
+    - cron: '0 23 * * *'
+      timezone: Europe/Paris # 23:00 in Paris, summer and winter time
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-stop
+
+jobs:
+  stop:
+    name: Stop the AKS cluster
+    if: github.repository == 'Nexlein/Bernstein'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESOURCE_GROUP: bernstein-rg
+      CLUSTER: bernstein-aks
+    steps:
+      # The CI app's custom role "Bernstein AKS Stopper" may only read and stop this cluster.
+      - name: Log in to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # --no-wait: following the stop operation needs a right on the subscription, which the role
+      # does not give; `az aks wait` only reads the cluster.
+      - name: Stop the cluster unless it is already stopped
+        run: |
+          state=$(az aks show -g "$RESOURCE_GROUP" -n "$CLUSTER" --query powerState.code -o tsv)
+          echo "Power state before: $state"
+          if [ "$state" = Stopped ]; then
+            echo "Already stopped: nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          az aks stop -g "$RESOURCE_GROUP" -n "$CLUSTER" --no-wait
+          az aks wait -g "$RESOURCE_GROUP" -n "$CLUSTER" --interval 30 --timeout 1500 \
+            --custom "powerState.code=='Stopped' && provisioningState=='Succeeded'"
+          state=$(az aks show -g "$RESOURCE_GROUP" -n "$CLUSTER" --query powerState.code -o tsv)
+          echo "Stopped $CLUSTER: power state $state." | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$state" = Stopped ]
