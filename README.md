@@ -13,12 +13,12 @@
 Requires `git`, Docker, `kubectl`, the Azure CLI, and an AKS cluster attached to your private registry (`az aks update --attach-acr <registry>`). **Full guide, prerequisites and where each credential goes: [`DEPLOY.md`](DEPLOY.md).** Cluster and registry setup: [`doc/setup/cluster-setup.md`](doc/setup/cluster-setup.md).
 
 ```bash
-cp k8s/secrets.env.example k8s/secrets.env           # then set POSTGRES_PASSWORD
+cp k8s/secrets.env.example k8s/secrets.env           # then set the 3 database passwords
 az aks get-credentials -g <resource-group> -n <cluster>
 REGISTRY=<name>.azurecr.io scripts/deploy.sh         # build, push, deploy, wait, print the URLs
 ```
 
-[`scripts/deploy.sh`](scripts/deploy.sh) builds the 3 images, tags them with the git SHA, pushes them to your registry, deploys `k8s/` with those images and prints the public URLs of Poll and Result. Run it again after a code change to roll out the new version with zero downtime. Options: `scripts/deploy.sh --help`.
+[`scripts/deploy.sh`](scripts/deploy.sh) tags each app with the git SHA of its last change, builds and pushes to your registry the images it does not have yet, deploys `k8s/` with those images and prints the public URLs of Poll and Result. Run it again after a code change to roll out the new version with zero downtime. Options: `scripts/deploy.sh --help`.
 
 ---
 
@@ -92,15 +92,16 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 
 ```
 ├── .claude/              # Agent settings and the generated code map
-├── .github/              # CI, Epitech mirror, Dependabot, PR template
-├── .husky/               # Pre-commit hook (regenerates the code map)
+├── .github/              # CI, nightly cluster stop, Epitech mirror, Dependabot, PR template
+├── .husky/               # Pre-commit hook (formats staged files, regenerates the code map)
 ├── doc/                  # ADRs, cluster setup guide, defense study guide and cheatsheet, subject
 ├── k8s/                  # Kustomize manifests (deployed by scripts/deploy.sh)
 ├── poll-application/     # Provided source code and Dockerfiles: Poll, Result, Worker
-├── scripts/              # Deploy script, code map generator
-├── tests/                # Zero-downtime test
+├── scripts/              # Deploy script, baseline rules check, code map generator
+├── tests/                # Zero-downtime test, kind cluster of the CI
+├── .trivyignore.yaml     # Image vulnerabilities we accept, each with its reason
 ├── docker-compose.yml    # Local 5-service stack, also used by CI
-├── CONTRIBUTING.md       # Local development and repo commands
+├── CONTRIBUTING.md       # Local development, repo commands, tests
 ├── DEPLOY.md             # Deployment guide: prerequisites, credentials, deploy
 └── CLAUDE.md             # Agent instructions and project rules
 ```
@@ -110,5 +111,5 @@ Step-by-step AKS cluster & ACR registry setup guide: [`doc/setup/cluster-setup.m
 ## Key Requirements & Defense Guardrails
 
 - **Zero-Downtime Rolling Updates**: User-facing services (`poll`, `result`) must maintain 100% availability during rolling deployments (`maxUnavailable: 0`, `readinessProbe` enabled, replicas $\ge 2$).
-- **Secret Isolation**: Sensitive credentials (`POSTGRES_PASSWORD`, cloud tokens) are never committed to Git and are configured via a Kubernetes Secret generated from `k8s/secrets.env` (template: `k8s/secrets.env.example`).
+- **Secret Isolation**: The database passwords are never committed to Git and are configured via a Kubernetes Secret generated from `k8s/secrets.env` (template: `k8s/secrets.env.example`). CI logs in to Azure with OIDC: no cloud password or token is stored in GitHub.
 - **High Availability & Persistence**: PostgreSQL data is mounted on a `PersistentVolumeClaim` (PVC), and all pods specify CPU/Memory resource requests and limits.
