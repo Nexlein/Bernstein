@@ -82,3 +82,5 @@ What breaks, and where we explain why we accept it:
 - **No alerting, no log history.** Nobody is told when the app breaks; logs go with the pod, and only the last crashed run is kept. [0024](0024-observability.md)
 - **The worker has no `SIGTERM` hook.** A vote popped in the sub-millisecond window before its upsert is lost if the pod stops then. [0010](0010-worker-deployment.md)
 - **Free tier and B-series nodes.** No API server SLA, and a long load test can use up the CPU credits. [0001](0001-aks-cluster.md)
+- **Known vulnerabilities accepted in PostgreSQL.** 3 `CRITICAL` ones with a fix, in the latest official image: 2 in `gosu`, never executed by our pod, and 1 until the image is rebuilt; that one blocks CI again from 2026-11-30. [0033](0033-ci-image-scan.md), `.trivyignore.yaml`
+- **Images are scanned when CI runs, not over time.** A CVE published after an image is deployed shows only at the next pipeline run. [0023](0023-security-posture.md), [0033](0033-ci-image-scan.md)
