@@ -6,7 +6,7 @@ Avant la soutenance : `kubectl config current-context` doit afficher `bernstein-
 
 ## 0. Le jour J, dans l'ordre
 
-**2 ou 3 jours avant** : mettre à jour l'image des nœuds, pour qu'aucune mise à jour ne soit en attente le jour J. Result coupe environ 40 s pendant que Postgres change de nœud : à faire hors démo ([mise en place, partie 5](../setup/cluster-setup.md#5-create-the-aks-cluster-5-10-min)).
+**2 ou 3 jours avant** : mettre à jour l'image des nœuds, pour qu'aucune mise à jour ne soit en attente le jour J. Postgres change de nœud et les scores de Result se figent environ 30 s : à faire hors démo ([mise en place, partie 5](../setup/cluster-setup.md#5-create-the-aks-cluster-5-10-min)).
 
 **15 minutes avant**, depuis le dossier du repo, sur `main` à jour :
 
@@ -34,7 +34,7 @@ REGISTRY=bernsteinacrmaeva.azurecr.io scripts/deploy.sh
 
 ## 1. « Que se passe-t-il si on fait `kubectl drain` sur ce nœud ? »
 
-Le nœud passe en `cordon`, ses pods sont évincés et recréés sur l'autre nœud. Poll et Result tiennent : 1 pod par nœud (anti-affinity) et un PDB `minAvailable: 1`. Mesuré : **0 erreur** sur 2221 requêtes. Limite : si le nœud porte `postgres-0`, Result échoue le temps que le disque change de nœud (**47 échecs sur 39 s**).
+Le nœud passe en `cordon`, ses pods sont évincés et recréés sur l'autre nœud. Poll et Result tiennent : 1 pod par nœud (anti-affinity) et un PDB `minAvailable: 1`. Mesuré : **0 erreur** sur 2221 requêtes. Même le nœud de `postgres-0` donne **0 erreur** (mesuré le 29/10) : seuls les scores de Result se figent 27 s, le temps que le disque change de nœud. Avant notre correctif de Result, ce cas faisait 47 échecs sur 39 s ([Q8](#8--et-si-redis-postgres-ou-le-worker-tombe--)).
 
 ```bash
 kubectl -n bernstein get pods -o wide   # quel pod sur quel nœud ; pour la démo, prendre le nœud sans postgres-0
@@ -93,7 +93,7 @@ Détails : [ADR 0026](../adr/0026-poll-hpa.md), [guide 8 quater](k8s-study-guide
 
 ## 5. « Sauvegarde et failover de la base ? »
 
-Sauvegarde : un `pg_dump` manuel vers la machine de l'opérateur, sans automatisation. Restauration testée : 6195 votes, même nombre de lignes et même checksum. Failover : aucun, 1 seul replica. Si le pod meurt, le StatefulSet le recrée avec le même disque (données gardées), mais Result est indisponible entre-temps (39 s pendant un drain). En production : un opérateur comme CloudNativePG (primaire + standbys, bascule automatique) ou Azure Database for PostgreSQL (sauvegardes automatiques, restauration à un instant donné).
+Sauvegarde : un `pg_dump` manuel vers la machine de l'opérateur, sans automatisation. Restauration testée : 6195 votes, même nombre de lignes et même checksum. Failover : aucun, 1 seul replica. Si le pod meurt, le StatefulSet le recrée avec le même disque (données gardées), mais les scores de Result se figent entre-temps (27 s pendant un drain), sans erreur : la page charge toujours. En production : un opérateur comme CloudNativePG (primaire + standbys, bascule automatique) ou Azure Database for PostgreSQL (sauvegardes automatiques, restauration à un instant donné).
 
 ```bash
 kubectl -n bernstein exec postgres-0 -- pg_dump -U postgres -d postgres --clean --if-exists > ~/votes-backup.sql
@@ -130,7 +130,7 @@ Détails : [`DEPLOY.md` partie 5](../../DEPLOY.md#5-roll-back), [ADR 0005](../ad
 ## 8. « Et si Redis, Postgres ou le worker tombe ? »
 
 - **Redis :** Poll non ready (page indisponible), le worker redémarre et attend. Result marche, scores figés. Les votes en file sont perdus.
-- **Postgres :** Poll marche, les votes s'empilent dans Redis (100 Mo au plus). Result s'arrête et redémarre une fois (`server.js` sort quand il perd la base), puis reste non ready ; le worker aussi. Mesuré : Result coupé 13 s si Postgres revient sur le même nœud, 43 s s'il change de nœud. Au retour, le worker repart seul en ~1 min : aucun vote perdu.
+- **Postgres :** Poll marche, les votes s'empilent dans Redis (100 Mo au plus). Result reste en ligne : la page charge, les scores se figent, et il réessaie toutes les 6 s (5 s de délai, puis 1 s de pause). Le worker devient non ready. Mesuré : 0 erreur sur Result, Postgres revenu en 11 s (même nœud) ou 27 s (autre nœud). Avant notre correctif du code fourni, `server.js` s'arrêtait (`process.exit(1)`) et Result tombait 13 à 43 s ([ADR 0008](../adr/0008-result-deployment.md)). Au retour, le worker repart seul en ~1 min : aucun vote perdu.
 - **Worker :** tout marche, les scores sont figés jusqu'à son retour, puis la file se vide.
 
 Démo, worker arrêté puis relancé :
@@ -224,6 +224,6 @@ Détails : [ADR 0033](../adr/0033-ci-image-scan.md), [ADR 0023](../adr/0023-secu
 
 ## 16. « Comment savez-vous que ça marche ? »
 
-On teste notre déploiement, pas le code fourni : l'app arrive sans tests, et c'est le déploiement qui est noté. Chaque PR passe 7 vérifications en CI. Les plus parlantes : la stack Compose avec un vote de bout en bout, et un vrai cluster Kubernetes 1.36.4 (kind) où l'on déploie `k8s/`, vote, puis fait un rollout et un drain sous `tests/zero-downtime.sh`, avec 0 erreur exigée. Sur AKS, on a mesuré à la main ce que kind ne couvre pas : 0 erreur sur 975 et 1996 requêtes pendant un rollout, 0 sur 2221 pendant un drain. Les coupures connues viennent toutes de Postgres, qui n'a qu'un réplica : par exemple Result tombe 39 s quand on draine le nœud de Postgres. Chaque test dit aussi ce qu'il ne prouve pas.
+On teste notre déploiement, pas le code fourni : l'app arrive sans tests, et c'est le déploiement qui est noté. Chaque PR passe 7 vérifications en CI. Les plus parlantes : la stack Compose avec un vote de bout en bout, et un vrai cluster Kubernetes 1.36.4 (kind) où l'on déploie `k8s/`, vote, puis fait un rollout et un drain sous `tests/zero-downtime.sh`, avec 0 erreur exigée. Sur AKS, on a mesuré à la main ce que kind ne couvre pas : 0 erreur sur 975 et 1996 requêtes pendant un rollout, 0 sur 2221 pendant un drain. Les coupures mesurées venaient de Postgres, qui n'a qu'un réplica : Result tombait 39 s quand on drainait le nœud de Postgres. On a corrigé Result pour qu'il se reconnecte au lieu de s'arrêter : le même drain donne maintenant 0 erreur. Chaque test dit aussi ce qu'il ne prouve pas.
 
 Détails : [`CONTRIBUTING.md`, Tests](../../CONTRIBUTING.md#tests), [ADR 0031](../adr/0031-ci-kind-e2e.md).

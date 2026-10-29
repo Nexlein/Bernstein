@@ -102,7 +102,7 @@ Total : **7 pods** au repos (2 poll, 2 result, 1 worker, 1 redis, 1 postgres), j
 
 Kubernetes n'a **pas** d'ordre de démarrage : tout est créé en même temps. Ça marche quand même pour 2 raisons :
 
-1. Les apps **réessaient** en boucle. Le worker affiche `Waiting for db` jusqu'à ce que Postgres réponde, et Result fait `async.retry` 1000 fois.
+1. Les apps **réessaient** en boucle. Le worker et Result affichent `Waiting for db` jusqu'à ce que Postgres réponde.
 2. Les **readiness probes** retiennent le trafic tant qu'un pod n'a pas ses dépendances.
 
 ### Questions probables
@@ -390,7 +390,7 @@ containers:
 - `image` : l'image officielle de PostgreSQL 18.6, en version Alpine (plus légère), la même que dans `docker-compose.yml`. Pas de passage par `images` dans la kustomization : c'est une image publique.
   - **`@sha256:…` fige l'image** : un tag comme `18-alpine` bouge à chaque nouvelle version, donc un nouveau nœud (à chaque `az aks start`) pourrait tirer une autre version sans aucun commit. Avec le digest, chaque nœud tire exactement la même image.
   - Dependabot propose les nouvelles versions mineures par PR ; jamais la 19 : changer de version majeure demande un `pg_upgrade` des données.
-  - Mettre à jour l'image redémarre Postgres (1 seul pod) : mesuré, Result coupé 49 s, Poll 0 erreur, votes conservés.
+  - Mettre à jour l'image redémarre Postgres (1 seul pod) : mesuré, Result coupé 49 s, Poll 0 erreur, votes conservés. Depuis que Result se reconnecte, seuls ses scores se figent (0 erreur en supprimant `postgres-0`).
 - `containerPort: 5432` : **documente** le port écouté et lui donne un nom (`postgres`), réutilisé par `targetPort` du Service. Ça n'ouvre et ne ferme aucun port : Postgres écoute sur 5432 de toute façon.
 
 ### Les variables d'environnement
@@ -1082,7 +1082,9 @@ Pas de `runAsUser` : l'image tourne déjà en `USER 1000` (`node`), et `runAsNon
 ### Les probes
 
 - `/healthz` (liveness) : le process Node répond.
-- `/readyz` (readiness) : le process répond **et** Postgres répond à `SELECT 1`. Si Postgres devient injoignable, les 2 pods Result sortent du trafic. La liveness, elle, reste OK : ce n'est **pas** Kubernetes qui les redémarre. En revanche, si la connexion déjà ouverte est coupée (Postgres redémarre), le code de Result fait `process.exit(1)` et le conteneur redémarre de lui-même (vu sur AKS : `RESTARTS 1` sur les 2 pods après un redémarrage de Postgres).
+- `/readyz` (readiness) : le process répond **et** Postgres a répondu au moins une fois depuis son démarrage. Un nouveau pod avec un mauvais mot de passe ne devient donc jamais ready : le rollout s'arrête, les anciens pods servent. Si Postgres tombe plus tard, les pods **restent** dans le Service : la page (un fichier statique) charge, seuls les scores se figent.
+- Result ne s'arrête pas non plus : un pool de connexions (`pg.Pool`) en rouvre une quand elle casse, et chaque requête abandonne au bout de 5 s, puis réessaie 1 s après (log `Waiting for db`).
+- Le code fourni faisait `process.exit(1)` dès que la base tombait, et `/readyz` lançait `SELECT 1` : chaque redémarrage de Postgres coupait Result 13 à 49 s. On l'a changé le 29/10 (PR #134, [ADR 0008](../adr/0008-result-deployment.md)).
 
 ### Pas de volume
 
@@ -1101,6 +1103,7 @@ Result gère aussi `SIGTERM` proprement : il arrête d'accepter des connexions, 
 - _« Pourquoi Result n'a pas de HPA ? »_ Sa charge ne grandit presque pas avec les visiteurs (une requête par seconde par pod). Et un nouveau pod ne récupère que les nouveaux visiteurs, puisque les WebSockets existantes restent sur leur pod.
 - _« Que voit l'utilisateur pendant une mise à jour de Result ? »_ Sa WebSocket se coupe, puis se reconnecte automatiquement à un pod disponible. Avec `maxUnavailable: 0`, il y en a toujours au moins 2.
 - _« Pourquoi pas de `runAsUser` ? »_ L'image définit déjà `USER 1000`. `runAsNonRoot` garantit seulement que ce n'est pas root.
+- _« Vous avez modifié le code fourni ? »_ Oui, `server.js` de Result. Les seules erreurs mesurées sur Result venaient de ce code (47 échecs pendant le drain du nœud de Postgres), pas du déploiement. Après le correctif : 0 erreur, sans changer les manifests ni ajouter de dépendance.
 
 ---
 
@@ -1414,13 +1417,13 @@ On modifie une valeur dans `app-config` ou dans `secrets.env`, puis on relance `
 
 ### 9.4 Un pod plante ou est supprimé
 
-| Pod supprimé | Qui le recrée          | Délai mesuré                                                 | Effet visible                                                                                                                                                        |
-| ------------ | ---------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 pod poll   | ReplicaSet             | quelques s                                                   | Aucun : l'autre pod sert                                                                                                                                             |
-| 1 pod result | ReplicaSet             | quelques s                                                   | Les WebSockets de ce pod se reconnectent à l'autre                                                                                                                   |
-| worker       | ReplicaSet             | quelques s                                                   | Les votes attendent dans Redis, puis sont traités                                                                                                                    |
-| redis        | ReplicaSet             | ~4 s                                                         | **Poll indisponible** pendant ce temps (sa readiness dépend de Redis). Votes en file perdus                                                                          |
-| postgres-0   | StatefulSet (même nom) | 8 s sur le même nœud, 27 s s'il change de nœud (mesuré, #96) | Result indisponible 13 à 43 s : ses 2 pods redémarrent une fois (`server.js` s'arrête quand il perd la base). Le worker attend. **Données conservées** (même disque) |
+| Pod supprimé | Qui le recrée          | Délai mesuré                                        | Effet visible                                                                                          |
+| ------------ | ---------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 1 pod poll   | ReplicaSet             | quelques s                                          | Aucun : l'autre pod sert                                                                               |
+| 1 pod result | ReplicaSet             | quelques s                                          | Les WebSockets de ce pod se reconnectent à l'autre                                                     |
+| worker       | ReplicaSet             | quelques s                                          | Les votes attendent dans Redis, puis sont traités                                                      |
+| redis        | ReplicaSet             | ~4 s                                                | **Poll indisponible** pendant ce temps (sa readiness dépend de Redis). Votes en file perdus            |
+| postgres-0   | StatefulSet (même nom) | 8 à 11 s sur le même nœud, 27 s s'il change de nœud | Result répond (0 erreur), ses scores se figent. Le worker attend. **Données conservées** (même disque) |
 
 Un conteneur qui **plante** (process qui s'arrête) est redémarré sur place par le kubelet, dans le même pod : la colonne `RESTARTS` augmente. S'il plante en boucle, l'attente entre deux redémarrages augmente (`CrashLoopBackOff`, jusqu'à 5 minutes).
 
@@ -1442,12 +1445,12 @@ Ce qui protège Poll et Result :
 
 **Mesuré sur AKS**, avec des requêtes en continu sur les 2 IP publiques :
 
-| Nœud drainé                              | Poll     | Result                        |
-| ---------------------------------------- | -------- | ----------------------------- |
-| 1 Poll + 1 Result + le worker            | 0 erreur | 0 erreur (2221 requêtes, 8 s) |
-| 1 Poll + 1 Result + **Redis + Postgres** | 0 erreur | **47 échecs pendant 39 s**    |
+| Nœud drainé                              | Poll     | Result                                                               |
+| ---------------------------------------- | -------- | -------------------------------------------------------------------- |
+| 1 Poll + 1 Result + le worker            | 0 erreur | 0 erreur (2221 requêtes, 8 s)                                        |
+| 1 Poll + 1 Result + **Redis + Postgres** | 0 erreur | 0 erreur (avant le correctif de Result : **47 échecs pendant 39 s**) |
 
-Le 2e cas est la limite connue : Postgres n'a qu'**un** replica. Pendant que son disque Azure change de nœud, les 2 pods Result sont non ready (leur `/readyz` dépend de la base), et le Service n'a plus de destination. Poll, lui, tient : Redis est revenu avant que sa readiness ne bascule. Seule une base répliquée réglerait ce cas ([ADR 0007](../adr/0007-postgres-statefulset.md)).
+Le 2e cas est la limite connue : Postgres n'a qu'**un** replica, et son disque Azure a mis 27 s à changer de nœud. Avant, les 2 pods Result devenaient non ready (leur `/readyz` lançait `SELECT 1`) et le Service n'avait plus de destination. Depuis que Result se reconnecte sans quitter le Service, la page répond : 0 erreur sur 546 requêtes, seuls les scores se figent ([ADR 0008](../adr/0008-result-deployment.md)). Poll, lui, tient : Redis est revenu avant que sa readiness ne bascule. Seule une base répliquée éviterait la pause des scores ([ADR 0007](../adr/0007-postgres-statefulset.md)).
 
 **Testé aussi à chaque PR** (#74) : la CI draine un worker d'un cluster kind sous requêtes continues, celui qui n'a pas Postgres (sur kind, son volume ne peut pas changer de nœud). Premier run : 0 erreur sur 1002 requêtes ([ADR 0031](../adr/0031-ci-kind-e2e.md)).
 
@@ -1455,15 +1458,15 @@ Pour remettre le nœud en service : `kubectl uncordon <nœud>`. Les pods ne revi
 
 ### 9.6 Une dépendance tombe
 
-| Composant en panne | Poll                                        | Worker                               | Result                                                 |
-| ------------------ | ------------------------------------------- | ------------------------------------ | ------------------------------------------------------ |
-| **Redis**          | Non ready, page indisponible                | Erreur, il redémarre et attend Redis | Fonctionne (scores figés)                              |
-| **Postgres**       | Fonctionne, les votes s'empilent dans Redis | Non ready, attend la base            | Redémarre une fois, puis non ready : page indisponible |
-| **Worker**         | Fonctionne                                  | —                                    | Fonctionne (scores figés)                              |
+| Composant en panne | Poll                                        | Worker                               | Result                    |
+| ------------------ | ------------------------------------------- | ------------------------------------ | ------------------------- |
+| **Redis**          | Non ready, page indisponible                | Erreur, il redémarre et attend Redis | Fonctionne (scores figés) |
+| **Postgres**       | Fonctionne, les votes s'empilent dans Redis | Non ready, attend la base            | Fonctionne (scores figés) |
+| **Worker**         | Fonctionne                                  | —                                    | Fonctionne (scores figés) |
 
 Après un redémarrage de Postgres, le worker est redémarré par sa liveness et redevient ready en environ 1 minute, sans intervention (partie 6). Aucun vote n'est perdu.
 
-Result, lui, **s'arrête tout seul** dès qu'il perd la base : `server.js` fait `process.exit(1)` (log : `Db connection error: error: terminating connection due to administrator command`), puis Kubernetes le redémarre et il attend la base. Donc `RESTARTS` passe à 1 sur ses 2 pods : c'est normal. Attention au délai de redémarrage du kubelet (10 s, 20 s, 40 s… jusqu'à 5 min) : plusieurs redémarrages de Postgres en quelques minutes peuvent laisser Result coupé plus longtemps que Postgres ([ADR 0008](../adr/0008-result-deployment.md)).
+Result, lui, **reste en ligne** : ses logs montrent `Db connection error: error: terminating connection due to administrator command`, puis `Waiting for db: Connection terminated due to connection timeout` toutes les 6 s, et il reprend seul quand la base revient. `RESTARTS` reste à 0. Avant notre correctif (PR #134), `server.js` faisait `process.exit(1)` : ses 2 pods redémarraient, avec le délai croissant du kubelet (10 s, 20 s, 40 s… jusqu'à 5 min) ([ADR 0008](../adr/0008-result-deployment.md)).
 
 ### 9.7 Monter en charge (scale)
 
@@ -1489,7 +1492,7 @@ kubectl -n bernstein scale deploy/result --replicas=4
 - **Coût mesuré** (Cost Management, [ADR 0001](../adr/0001-aks-cluster.md#cost)) : **0,47 € par jour arrêté**, plus **environ 0,2 € par heure allumé** (les nœuds et leurs disques OS). Arrêté, restent facturés les 3 IP publiques (0,32 €/jour), le registry (0,15 €) et le disque Postgres. Le load balancer est gratuit dans l'offre étudiante. Les disques OS partent avec les nœuds : aucun coût de disque OS les jours arrêtés.
 - Les Services `poll` et `result` existent toujours, et leurs IP publiques sont **conservées** : vérifié à chaque `start` sur notre cluster, sans garantie écrite de Microsoft. Azure les range dans le groupe de ressources du cluster (`MC_…`), où nos comptes n'ont pas le droit de lecture. En revanche, supprimer le namespace libère les IP : le déploiement suivant en reçoit de nouvelles (vu dans #39).
 
-**Et si AKS met à jour les nœuds pendant la démo ?** Une mise à jour d'image recrée les nœuds un par un, comme un drain : Redis et Postgres changent de nœud, et Result tombe environ 40 s (mesuré pendant le passage à Cilium). Pour l'éviter, AKS ne peut lancer ces mises à jour que le dimanche de 03:00 à 07:00 (fenêtres de maintenance `aksManagedNodeOSUpgradeSchedule` et `default`). Le cluster est arrêté à cette heure-là, donc rien ne part pendant qu'on travaille. Quelques jours avant la soutenance, on applique à la main la dernière image, si elle est plus récente (`az aks nodepool get-upgrades`, [guide de setup](../setup/cluster-setup.md#control-when-aks-updates-the-nodes)). Limite : Microsoft peut ignorer la fenêtre pour une maintenance urgente.
+**Et si AKS met à jour les nœuds pendant la démo ?** Une mise à jour d'image recrée les nœuds un par un, comme un drain : Redis et Postgres changent de nœud, et les scores de Result se figent environ 30 s (avant le correctif de Result, il tombait environ 40 s, mesuré pendant le passage à Cilium). Pour l'éviter, AKS ne peut lancer ces mises à jour que le dimanche de 03:00 à 07:00 (fenêtres de maintenance `aksManagedNodeOSUpgradeSchedule` et `default`). Le cluster est arrêté à cette heure-là, donc rien ne part pendant qu'on travaille. Quelques jours avant la soutenance, on applique à la main la dernière image, si elle est plus récente (`az aks nodepool get-upgrades`, [guide de setup](../setup/cluster-setup.md#control-when-aks-updates-the-nodes)). Limite : Microsoft peut ignorer la fenêtre pour une maintenance urgente.
 
 ### 9.9 Tout supprimer
 
