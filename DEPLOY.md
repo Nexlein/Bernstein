@@ -172,7 +172,7 @@ docker buildx imagetools inspect postgres:<new tag> | grep -m1 Digest
 REGISTRY=<name>.azurecr.io tests/zero-downtime.sh --from both -- scripts/deploy.sh
 ```
 
-Redis rolls with no error for Poll. PostgreSQL has a single pod, so it restarts: Result is down meanwhile (49 s measured), and the votes wait in Redis ([ADR 0009](doc/adr/0009-redis-queue.md)). Never move PostgreSQL to another major version (18 to 19) this way: its data needs `pg_upgrade` first.
+Redis rolls with no error for Poll. PostgreSQL has a single pod, so it restarts: the Result page keeps answering but its scores freeze meanwhile (0 errors when deleting `postgres-0`, back in 11 s), and the votes wait in Redis ([ADR 0008](doc/adr/0008-result-deployment.md), [ADR 0009](doc/adr/0009-redis-queue.md)). Never move PostgreSQL to another major version (18 to 19) this way: its data needs `pg_upgrade` first.
 
 ## 5. Roll back
 

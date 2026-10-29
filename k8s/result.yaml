@@ -88,7 +88,7 @@ spec:
                 secretKeyRef:
                   name: app-secrets
                   key: RESULT_DB_PASSWORD
-          # Liveness: the process answers. Readiness: it also reaches PostgreSQL.
+          # Liveness: the process answers. Readiness: it reached PostgreSQL once since it started.
           livenessProbe:
             httpGet:
               path: /healthz

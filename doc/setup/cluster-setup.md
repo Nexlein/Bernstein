@@ -145,7 +145,7 @@ az aks maintenanceconfiguration list -g "$RG" --cluster-name "$AKS" -o table
 ```bash
 az aks nodepool get-upgrades -g "$RG" --cluster-name "$AKS" --nodepool-name nodepool1 --query latestNodeImageVersion -o tsv
 az aks nodepool show -g "$RG" --cluster-name "$AKS" -n nodepool1 --query nodeImageVersion -o tsv
-# Different? A few days before the defense, under tests/zero-downtime.sh (Result is down for about 40 s):
+# Different? A few days before the defense, under tests/zero-downtime.sh (PostgreSQL moves: the Result scores freeze about 30 s):
 az aks nodepool upgrade -g "$RG" --cluster-name "$AKS" -n nodepool1 --node-image-only
 ```
 
