@@ -32,7 +32,7 @@ Ports, probes, env vars, versions: `.claude/codemap.md` and `poll-application/RE
 
 ## Commands
 
-- `npm install`: installs Husky hooks + Prettier. `npm run codemap` / `npm run format`: regenerate codemap / format (the pre-commit hook runs the codemap).
+- `npm install`: installs Husky hooks + Prettier. `npm run codemap` / `npm run format`: regenerate codemap / format (the pre-commit hook formats staged files with lint-staged, then runs the codemap).
 - `docker compose up -d --build` / `docker compose down -v`: local 5-service stack (Poll :5000, Result :5001).
 
 ---
