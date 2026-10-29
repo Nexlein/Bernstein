@@ -1,6 +1,6 @@
 # Deploy Bernstein
 
-How to deploy the voting app on your own AKS cluster and private registry, from a fresh clone. Why each choice was made: [`doc/adr/`](doc/adr/README.md). Last followed end to end from a fresh clone of the Epitech mirror: 2026-10-28 (#100).
+How to deploy the voting app on your own AKS cluster and private registry, from a fresh clone. Why each choice was made: [`doc/adr/`](doc/adr/README.md). Last followed end to end from a fresh clone of the Epitech mirror, on an empty namespace: 2026-10-29 (#100).
 
 0. [Get the code](#0-get-the-code).
 1. [Prerequisites](#1-prerequisites): tools, and an AKS cluster attached to a private ACR registry.
@@ -113,7 +113,7 @@ In order, the script:
 4. applies `k8s/` with those images, through a generated overlay in `.deploy/`, and waits for every rollout. Once PostgreSQL is ready, it creates or updates the database users of Result and the worker (`k8s/users.sh`);
 5. waits for the public IPs and prints the URLs of Poll and Result.
 
-Measured from a fresh clone of the Epitech mirror: 2 min 11 s for the first run (base images pulled, 3 images built and pushed, disk and public IPs created); the next ones build and roll only the apps whose code changed. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
+Measured from a fresh clone of the Epitech mirror: 2 min 11 s for the first run (base images pulled, 3 images built and pushed, disk and public IPs created); 55 s on 2026-10-29, on an empty namespace with the 3 images already in the registry (nothing built); the next ones build and roll only the apps whose code changed. Options: `scripts/deploy.sh --help`. Do not run `kubectl apply -k k8s/` by hand: the manifests name no registry, so the app pods would end in `ImagePullBackOff` ([ADR 0017](doc/adr/0017-deploy-script.md)).
 
 ### Check the deployment
 
@@ -159,7 +159,7 @@ If it fails, the network between your machine and Azure drops connections, and t
 3. Optional, in a second terminal: `kubectl -n bernstein get pods -w` shows the pods replaced one at a time.
 4. Reload the Poll page: the new title shows, and "Processed by container ID" names the pod that answered.
 
-Measured on AKS: only Poll rebuilt and rolled, the script took 34 s (52 s when the 3 apps rolled), 0 errors in 1363 requests from the client and 3080 from inside the cluster ([ADR 0017](doc/adr/0017-deploy-script.md)). Run the test from a machine whose connection is not busy: a big push (first deploy, all layers new) or another download slows down the test's own requests ([troubleshooting](#7-troubleshooting)).
+Measured on AKS: only Poll rebuilt and rolled, the script took 34 s (52 s when the 3 apps rolled), 0 errors in 1363 requests from the client and 3080 from inside the cluster ([ADR 0017](doc/adr/0017-deploy-script.md)). Again from a fresh clone of the Epitech mirror, 2026-10-29: the `<h3>` title changed, Poll built in 19 s, the whole command 1 min 17 s, 0 errors in 1880 requests from the client and 4380 from inside the cluster. Run the test from a machine whose connection is not busy: a big push (first deploy, all layers new) or another download slows down the test's own requests ([troubleshooting](#7-troubleshooting)).
 
 On our repository, CI also pushes the images of every commit merged into `main`, after its tests, with the same tags (`scripts/deploy.sh --push-only`, [ADR 0034](doc/adr/0034-ci-publish-images.md)). A deploy of `main` then finds its images in our registry and goes straight to the rollout, with no build or upload. It changes nothing for another registry: there, `scripts/deploy.sh` builds and pushes as above.
 
