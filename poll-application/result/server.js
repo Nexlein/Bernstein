@@ -11,6 +11,10 @@ var db_config = {
   database: process.env['POSTGRES_DB'],
   user: process.env['POSTGRES_USER'],
   password: process.env['POSTGRES_PASSWORD'],
+  // Give up after 5 s instead of waiting forever: a connection to a node that died would
+  // otherwise hang until TCP gives up (minutes), and the scores would stay frozen that long.
+  connectionTimeoutMillis: 5000,
+  query_timeout: 5000,
 };
 
 io.sockets.on('connection', function (socket) {
