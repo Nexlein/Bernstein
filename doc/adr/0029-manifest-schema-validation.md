@@ -22,5 +22,5 @@ CI validates every object rendered by `kubectl kustomize k8s/` with kubeconform 
 ## Alternatives rejected
 
 - **kubeval:** **Fact:** no longer maintained; its README points to kubeconform. ([kubeval](https://github.com/instrumenta/kubeval))
-- **`kubectl apply --dry-run=server --validate=strict`:** the exact check, by the API server itself, but it needs a cluster in CI. Planned with kind in #73.
+- **`kubectl apply --dry-run=server --validate=strict`:** the exact check, by the API server itself, but it needs a cluster in CI. Done since with kind, which also deploys the manifests ([ADR 0031](0031-ci-kind-e2e.md)); kubeconform stays, as the fast check that runs first.
 - **`kubectl apply --dry-run=client`:** client-side validation also needs a server for the OpenAPI schema.

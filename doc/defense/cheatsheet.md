@@ -4,6 +4,34 @@ Une question, la réponse en 2-3 lignes, la commande à montrer. Les explication
 
 Avant la soutenance : `kubectl config current-context` doit afficher `bernstein-aks`. Garder un terminal avec `kubectl -n bernstein get pods -o wide -w` ouvert. Pour prouver qu'il n'y a pas d'erreur pendant une action, la lancer sous le test de requêtes continues : `tests/zero-downtime.sh --from both -- <commande>` ([ADR 0016](../adr/0016-zero-downtime-test.md)). Les lignes `@cluster` viennent d'un pod dans le cluster : elles ne dépendent pas du réseau de la salle. Juste avant, `DURATION=60 tests/zero-downtime.sh`, sans rien déployer, doit afficher `PASS`. Sinon c'est la connexion de la machine, pas le cluster (mesuré : jusqu'à 1,6 % de timeouts au repos depuis une connexion domestique) : changer de connexion.
 
+## 0. Le jour J, dans l'ordre
+
+**2 ou 3 jours avant** : mettre à jour l'image des nœuds, pour qu'aucune mise à jour ne soit en attente le jour J. Result coupe environ 40 s pendant que Postgres change de nœud : à faire hors démo ([mise en place, partie 5](../setup/cluster-setup.md#5-create-the-aks-cluster-5-10-min)).
+
+**15 minutes avant**, depuis le dossier du repo, sur `main` à jour :
+
+```bash
+az aks start -g bernstein-rg -n bernstein-aks                                   # 5 à 10 min
+az aks get-credentials -g bernstein-rg -n bernstein-aks --overwrite-existing     # l'IP de l'API peut changer
+REGISTRY=bernsteinacrmaeva.azurecr.io scripts/deploy.sh                         # remet la version de main, affiche les URL
+tests/zero-downtime.sh --from both -- sh -c 'kubectl -n bernstein rollout restart deploy/poll deploy/result && kubectl -n bernstein rollout status deploy/poll && kubectl -n bernstein rollout status deploy/result'
+kubectl -n bernstein get pods -o wide                                           # 7 pods 1/1, un Poll et un Result par nœud
+DURATION=60 tests/zero-downtime.sh                                              # PASS, sinon changer de connexion
+```
+
+Le `rollout restart` sous le test ré-étale Poll et Result : après un `az aks start`, tous les pods sont sur le premier nœud prêt, et la démo du drain couperait ([`DEPLOY.md`, After `az aks start`](../../DEPLOY.md#after-az-aks-start)). Garder ouverts : `kubectl -n bernstein get pods -o wide -w`, et les 2 URL.
+
+**Si l'évaluateur veut voir le déploiement depuis zéro** : vider le namespace (91 s mesurées ; les votes, le disque Postgres et les IP publiques partent avec), puis redéployer (55 s mesurées, les images sont déjà dans le registry). Donner les 2 nouvelles IP affichées à la fin.
+
+```bash
+kubectl delete namespace bernstein
+REGISTRY=bernsteinacrmaeva.azurecr.io scripts/deploy.sh
+```
+
+**La mise à jour notée** : changer un fichier visible, par exemple le `<h3>` de `poll-application/poll/templates/index.html`, sans commit, puis `REGISTRY=bernsteinacrmaeva.azurecr.io tests/zero-downtime.sh --from both -- scripts/deploy.sh`. Mesuré depuis un clone du miroir : 1 min 17 s, 0 erreur sur 6260 requêtes ([`DEPLOY.md` partie 4](../../DEPLOY.md#4-update-the-app-with-zero-downtime)).
+
+**Après** : `az aks stop -g bernstein-rg -n bernstein-aks`. Sinon, l'arrêt de nuit s'en charge à 23:00 ([ADR 0035](../adr/0035-nightly-stop.md)).
+
 ## 1. « Que se passe-t-il si on fait `kubectl drain` sur ce nœud ? »
 
 Le nœud passe en `cordon`, ses pods sont évincés et recréés sur l'autre nœud. Poll et Result tiennent : 1 pod par nœud (anti-affinity) et un PDB `minAvailable: 1`. Mesuré : **0 erreur** sur 2221 requêtes. Limite : si le nœud porte `postgres-0`, Result échoue le temps que le disque change de nœud (**47 échecs sur 39 s**).

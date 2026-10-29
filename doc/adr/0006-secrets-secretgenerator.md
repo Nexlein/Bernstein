@@ -1,10 +1,10 @@
 # ADR 0006: Secrets from a gitignored file through `secretGenerator`
 
-**Status:** Accepted · **Date:** 2026-10-19 · **Issues:** #16, #17
+**Status:** Accepted · **Date:** 2026-10-19 · **Issues:** #16, #17, #109
 
 ## Decision
 
-The evaluator copies `k8s/secrets.env.example` to `k8s/secrets.env` and fills in `POSTGRES_PASSWORD` (and optionally `REDIS_PASSWORD`). A `secretGenerator` in `k8s/kustomization.yaml` turns it into the `app-secrets` Secret on deploy (`scripts/deploy.sh`). The real file is gitignored.
+The evaluator copies `k8s/secrets.env.example` to `k8s/secrets.env` and fills in the 3 database passwords: `POSTGRES_PASSWORD`, and since #109 `RESULT_DB_PASSWORD` and `WORKER_DB_PASSWORD`, for the users Result and the worker connect with ([ADR 0023](0023-security-posture.md)). `REDIS_PASSWORD` is optional. `scripts/deploy.sh` stops before changing anything if one of the 3 is empty. A `secretGenerator` in `k8s/kustomization.yaml` turns it into the `app-secrets` Secret on deploy (`scripts/deploy.sh`). The real file is gitignored.
 
 ## Why
 

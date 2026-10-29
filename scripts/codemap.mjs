@@ -28,7 +28,8 @@ const rows = SERVICES.map((svc) => {
     docker
       .match(/^FROM\s+(\S+)/gm)
       ?.at(-1)
-      ?.replace('FROM ', '') ?? '-';
+      ?.replace('FROM ', '')
+      .replace(/@sha256:\w+$/, '') ?? '-'; // the digest pin changes with every Dependabot bump
   const port = docker.match(/^EXPOSE\s+(\d+)/m)?.[1] ?? '-';
   const src = files
     .filter((f) => f.startsWith(dir) && /\.(py|js|java)$/.test(f))
