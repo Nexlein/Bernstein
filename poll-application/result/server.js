@@ -1,12 +1,9 @@
 var express = require('express'),
-  async = require('async'),
   pg = require('pg'),
   path = require('path'),
   app = express(),
   server = require('http').Server(app),
   io = require('socket.io')(server);
-
-var dbClient = null;
 
 var db_config = {
   host: process.env['POSTGRES_HOST'],
@@ -14,6 +11,10 @@ var db_config = {
   database: process.env['POSTGRES_DB'],
   user: process.env['POSTGRES_USER'],
   password: process.env['POSTGRES_PASSWORD'],
+  // Give up after 5 s instead of waiting forever: a connection to a node that died would
+  // otherwise hang until TCP gives up (minutes), and the scores would stay frozen that long.
+  connectionTimeoutMillis: 5000,
+  query_timeout: 5000,
 };
 
 io.sockets.on('connection', function (socket) {
@@ -24,50 +25,36 @@ io.sockets.on('connection', function (socket) {
   });
 });
 
-async.retry(
-  { times: 1000, interval: 1000 },
-  function (callback) {
-    const client = new pg.Client(db_config);
-    client
-      .connect()
-      .then(() => {
-        callback(undefined, client);
-      })
-      .catch((err) => {
-        console.error('Waiting for db', err);
-        callback(err, undefined);
-      });
-  },
-  function (err, client) {
-    if (err) {
-      console.error('Giving up');
-      return process.exit(1);
-    }
-    console.log('Connected to db');
-    dbClient = client;
-    client.on('error', function (err) {
-      console.error('Db connection error: ' + err);
-      process.exit(1);
-    });
-    getVotes(client);
-  },
-);
+// A pool opens a new connection when one breaks: a PostgreSQL restart or move no longer
+// stops Result. The page keeps loading, and the scores resume once the database is back.
+var pool = new pg.Pool(db_config);
+// A broken idle connection is reported here; without a handler, it would crash the process.
+pool.on('error', function (err) {
+  console.error('Db connection error: ' + err);
+});
 
-function getVotes(client) {
-  client
+// Ready once the database answered since the start: a wrong password or host never becomes
+// ready (the rollout stops, the old pods keep serving), but a later outage keeps the pod in the
+// Service instead of leaving it without endpoints.
+var dbAnsweredOnce = false;
+
+function getVotes() {
+  pool
     .query('SELECT vote, COUNT(id) AS count FROM votes GROUP BY vote', [])
     .then((result) => {
+      if (!dbAnsweredOnce) console.log('Connected to db');
+      dbAnsweredOnce = true;
       var votes = collectVotesFromResult(result);
       io.sockets.emit('scores', JSON.stringify(votes));
-      setTimeout(function () {
-        getVotes(client);
-      }, 1000);
     })
     .catch((err) => {
-      console.error('Error performing query: ' + err);
-      process.exit(1);
+      console.error('Waiting for db: ' + err.message);
+    })
+    .finally(() => {
+      setTimeout(getVotes, 1000);
     });
 }
+getVotes();
 
 function collectVotesFromResult(result) {
   var votes = { a: 0, b: 0, c: 0, d: 0 };
@@ -97,13 +84,7 @@ app.get('/healthz', function (req, res) {
 });
 
 app.get('/readyz', function (req, res) {
-  if (!dbClient) {
-    return res.sendStatus(503);
-  }
-  dbClient
-    .query('SELECT 1')
-    .then(() => res.sendStatus(200))
-    .catch(() => res.sendStatus(503));
+  res.sendStatus(dbAnsweredOnce ? 200 : 503);
 });
 
 server.listen(80, function () {

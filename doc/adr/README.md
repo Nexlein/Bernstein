@@ -76,7 +76,7 @@ Line-by-line explanation of the manifests (in French): [`../defense/k8s-study-gu
 
 What breaks, and where we explain why we accept it:
 
-- **PostgreSQL has 1 replica.** Draining its node made Result fail 47 requests over 39 s while the disk moved. Only a replicated database would fix it. [0007](0007-postgres-statefulset.md), [0014](0014-pod-disruption-budgets.md) No automated backup: a manual dump. [0019](0019-postgres-backup.md)
+- **PostgreSQL has 1 replica.** While it restarts or moves (27 s when draining its node), the scores on Result freeze and the votes wait in Redis; the pages keep answering. Only a replicated database would avoid the pause. [0007](0007-postgres-statefulset.md), [0008](0008-result-deployment.md), [0014](0014-pod-disruption-budgets.md) No automated backup: a manual dump. [0019](0019-postgres-backup.md)
 - **Redis has 1 replica, in memory.** A Redis restart (about 4 s) makes Poll unready; votes still queued in Redis are lost if it crashes. [0009](0009-redis-queue.md) When full (100 MB), it refuses new votes instead of crashing. [0018](0018-resource-requests-and-limits.md)
 - **Cluster security defaults.** Public API server without IP ranges, local accounts on. [0023](0023-security-posture.md)
 - **HTTP only.** Votes and the voter cookie travel in clear. [0022](0022-no-https.md)

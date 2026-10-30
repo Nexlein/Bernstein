@@ -17,7 +17,8 @@
 - **Fact:** a PDB only protects against **voluntary** disruptions; a node crash or an OOMKill is not stopped. ([Kubernetes docs: Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/))
 - **Measured on AKS, continuous requests to both public IPs:**
   - Draining the node with one Poll, one Result and the worker: **0 errors** (2221 requests, 8 s).
-  - Draining the node that also ran **PostgreSQL and Redis**: 0 errors on Poll, but **47 failed requests on Result over 39 s**. PostgreSQL has 1 replica: while its disk moves, both Result pods fail `/readyz` and the Service has no endpoint. A PDB cannot help a single replica; only a replicated database would ([ADR 0007](0007-postgres-statefulset.md)).
+  - Draining the node that also ran **PostgreSQL and Redis**: at first 0 errors on Poll, but **47 failed requests on Result over 39 s**. PostgreSQL has 1 replica: while its disk moved, both Result pods failed `/readyz` and the Service had no endpoint. A PDB cannot help a single replica ([ADR 0007](0007-postgres-statefulset.md)).
+  - The same drain once Result kept serving without the database ([ADR 0008](0008-result-deployment.md), 2026-10-29): **0 errors** on both (546 requests on Result, 1315 from inside the cluster). Only the scores froze, 27 s, while PostgreSQL moved.
 - If both replicas sit on the drained node (anti-affinity is only preferred), the drain evicts one, waits until its replacement is Ready elsewhere, then evicts the other. Slower, but no outage.
 
 ## Alternatives rejected

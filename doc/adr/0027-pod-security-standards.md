@@ -23,7 +23,7 @@ The `bernstein` namespace has the labels `pod-security.kubernetes.io/enforce`, `
 
 - A pod template that breaks a rule fails at the **ReplicaSet**, not at `kubectl apply`: the Deployment is accepted, its pods are refused (`kubectl -n bernstein get events` shows why). The `warn` label prints the reason at apply time.
 - **Debugging inside the namespace follows the rules too.** `kubectl debug` with its default profile is refused (it adds `SYS_PTRACE`); `kubectl debug <pod> --image=busybox:1.37 --profile=restricted` works. A throwaway test pod goes in another namespace.
-- **Applying this change restarted PostgreSQL** (its pod template changed): Result failed for 30 to 40 s, as for any PostgreSQL change ([ADR 0007](0007-postgres-statefulset.md)). Poll: 0 errors.
+- **Applying this change restarted PostgreSQL** (its pod template changed): Result failed for 30 to 40 s, as for any PostgreSQL change at the time ([ADR 0007](0007-postgres-statefulset.md)); Result now keeps serving ([ADR 0008](0008-result-deployment.md)). Poll: 0 errors.
 - **No version pinned:** a Kubernetes upgrade that tightens `restricted` applies at once. Our pods follow the current rules with no exception, so the risk is low; pinning `enforce-version` would delay new rules until we change the label.
 - PSS does not cover everything: resource limits, network flows, image origin or a read-only filesystem are other controls ([ADR 0018](0018-resource-requests-and-limits.md), [ADR 0025](0025-network-policies.md), #77).
 

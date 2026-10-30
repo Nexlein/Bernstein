@@ -38,7 +38,7 @@ flowchart TD
 
     subgraph WebTier["Front-End Workloads (Replicas >= 2)"]
         PollPods["Poll Pods (Flask / Python 3.14)\n• Port: 80\n• Liveness: GET /healthz\n• Readiness: GET /readyz (Redis PING)"]
-        ResultPods["Result Pods (Node.js 24 / Express / Socket.IO)\n• Port: 80\n• Liveness: GET /healthz\n• Readiness: GET /readyz (Postgres SELECT 1)"]
+        ResultPods["Result Pods (Node.js 24 / Express / Socket.IO)\n• Port: 80\n• Liveness: GET /healthz\n• Readiness: GET /readyz (Postgres answered once)"]
     end
 
     subgraph InternalServices["Cluster Internal Services (ClusterIP)"]

@@ -16,7 +16,7 @@ No automated backup and no standby database. A backup is a manual `pg_dump` from
 ## Trade-offs
 
 - Nothing is saved unless someone runs the dump. A lost disk loses every vote since the last one.
-- No failover: while PostgreSQL moves during a drain of its node, Result is down (39 s measured, [ADR 0014](0014-pod-disruption-budgets.md)).
+- No failover: while PostgreSQL moves during a drain of its node (27 s measured), the scores on Result freeze and the votes wait in Redis ([ADR 0014](0014-pod-disruption-budgets.md)).
 
 ## What we would do in production (not done)
 

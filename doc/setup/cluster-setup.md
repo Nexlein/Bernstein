@@ -130,7 +130,7 @@ Both options are needed: with `--network-dataplane cilium` alone, AKS answers `C
 
 ### Control when AKS updates the nodes
 
-With the `NodeImage` node OS channel (the default), AKS reimages the nodes with each new weekly node image, at a time it chooses, unless a maintenance window is set. A reimage moves Redis and PostgreSQL, so Result goes down for about 40 s ([ADR 0023](../adr/0023-security-posture.md)). Allow node image updates (`aksManagedNodeOSUpgradeSchedule`) and AKS releases (`default`) only on Sunday from 03:00 to 07:00, Paris time:
+With the `NodeImage` node OS channel (the default), AKS reimages the nodes with each new weekly node image, at a time it chooses, unless a maintenance window is set. A reimage moves Redis and PostgreSQL, so the Result scores freeze for about 30 s ([ADR 0008](../adr/0008-result-deployment.md), [ADR 0023](../adr/0023-security-posture.md)). Allow node image updates (`aksManagedNodeOSUpgradeSchedule`) and AKS releases (`default`) only on Sunday from 03:00 to 07:00, Paris time:
 
 ```bash
 az aks maintenanceconfiguration add -g "$RG" --cluster-name "$AKS" --name aksManagedNodeOSUpgradeSchedule \
@@ -145,7 +145,7 @@ az aks maintenanceconfiguration list -g "$RG" --cluster-name "$AKS" -o table
 ```bash
 az aks nodepool get-upgrades -g "$RG" --cluster-name "$AKS" --nodepool-name nodepool1 --query latestNodeImageVersion -o tsv
 az aks nodepool show -g "$RG" --cluster-name "$AKS" -n nodepool1 --query nodeImageVersion -o tsv
-# Different? A few days before the defense, under tests/zero-downtime.sh (Result is down for about 40 s):
+# Different? A few days before the defense, under tests/zero-downtime.sh (PostgreSQL moves: the Result scores freeze about 30 s):
 az aks nodepool upgrade -g "$RG" --cluster-name "$AKS" -n nodepool1 --node-image-only
 ```
 

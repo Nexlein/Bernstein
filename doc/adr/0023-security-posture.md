@@ -38,7 +38,7 @@ The facts behind the table:
 
 - Cluster-level hardening needs the Owner role and changes how everyone connects: an IP allowlist breaks when a home IP changes or for an evaluator at an unknown address; Entra ID needs an admin group and accounts for each person.
 - **3 database passwords instead of 1**, all required in `secrets.env` (`scripts/deploy.sh` checks them). Everyone who deploys to the same cluster must use the same values: a different one is applied on the next deploy, and the other teammates' apps would be refused.
-- **Moving an existing database to these users restarted PostgreSQL once** (its Secret gained 2 keys): Result was down 36 s while Poll had 0 errors, measured under `tests/zero-downtime.sh`. A one-time step; a new cluster gets the users at first start.
+- **Moving an existing database to these users restarted PostgreSQL once** (its Secret gained 2 keys): Result was down 36 s while Poll had 0 errors, measured under `tests/zero-downtime.sh`, before Result reconnected ([ADR 0008](0008-result-deployment.md)). A one-time step; a new cluster gets the users at first start.
 - The local Docker Compose stack still connects as `postgres`: it is for development only.
 - The NetworkPolicies filter by pod labels, inside the cluster only: the public port 80 of Poll and Result stays open to everyone ([ADR 0004](0004-public-access-loadbalancer.md)).
 

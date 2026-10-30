@@ -61,10 +61,10 @@ Each service directory (`poll/`, `worker/`, `result/`) ships its own `Dockerfile
 
 ### result
 
-|        |                                                                                                |
-| ------ | ---------------------------------------------------------------------------------------------- |
-| Port   | 80                                                                                             |
-| Health | `GET /healthz` (liveness), `GET /readyz` (200 if PostgreSQL answers `SELECT 1`, 503 otherwise) |
+|        |                                                                                                         |
+| ------ | ------------------------------------------------------------------------------------------------------- |
+| Port   | 80                                                                                                      |
+| Health | `GET /healthz` (liveness), `GET /readyz` (200 once PostgreSQL has answered since the start, 503 before) |
 
 | Env var             | Required | Default |
 | ------------------- | -------- | ------- |
