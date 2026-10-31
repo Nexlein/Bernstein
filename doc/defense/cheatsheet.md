@@ -32,6 +32,76 @@ REGISTRY=bernsteinacrmaeva.azurecr.io scripts/deploy.sh
 
 **Après** : `az aks stop -g bernstein-rg -n bernstein-aks`. Sinon, l'arrêt de nuit s'en charge à 23:00 ([ADR 0035](../adr/0035-nightly-stop.md)).
 
+## Commandes à la demande
+
+« Démarre », « arrête », « relance »… : la commande à taper pour chaque demande, depuis le dossier du repo. Remplacer `<pod>` et `<nœud>` par un vrai nom, pris dans `kubectl -n bernstein get pods -o wide`. Pour prouver qu'une action ne coupe rien, la lancer sous le test : `tests/zero-downtime.sh --from both -- <commande>`.
+
+**Le cluster (Azure)**
+
+```bash
+az aks show -g bernstein-rg -n bernstein-aks --query powerState.code -o tsv   # Running ou Stopped
+az aks start -g bernstein-rg -n bernstein-aks                                 # démarrer : 5 à 10 min
+az aks get-credentials -g bernstein-rg -n bernstein-aks --overwrite-existing   # après chaque start
+az aks stop -g bernstein-rg -n bernstein-aks                                  # arrêter : 2 à 3 min, tout est gardé
+kubectl config current-context                                                # bernstein-aks
+kubectl get nodes -o wide                                                     # 2 nœuds Ready
+az acr repository show-tags -n bernsteinacrmaeva --repository poll -o table   # les images du registry
+```
+
+**Déployer**
+
+```bash
+REGISTRY=bernsteinacrmaeva.azurecr.io scripts/deploy.sh                        # déployer ou remettre la version de main
+REGISTRY=bernsteinacrmaeva.azurecr.io tests/zero-downtime.sh --from both -- scripts/deploy.sh   # mise à jour sous le test
+kubectl -n bernstein get svc poll result                                      # les 2 IP publiques
+kubectl delete namespace bernstein                                            # tout supprimer (votes et IP compris), puis deploy.sh
+kubectl kustomize k8s/                                                        # voir les manifests rendus, sans rien appliquer
+```
+
+**Une app**
+
+```bash
+kubectl -n bernstein rollout restart deploy/result                            # relancer ses pods, sans coupure
+kubectl -n bernstein rollout status deploy/result                             # attendre la fin du rollout
+kubectl -n bernstein scale deploy/worker --replicas=0                         # arrêter une app (ici le worker)
+kubectl -n bernstein scale deploy/worker --replicas=1                         # la relancer
+kubectl -n bernstein scale deploy/result --replicas=3                         # plus de pods ; Poll : c'est le HPA qui décide
+kubectl -n bernstein delete pod <pod>                                         # tuer un pod : son contrôleur le recrée
+kubectl -n bernstein rollout history deploy/poll                              # les versions
+kubectl -n bernstein rollout undo deploy/poll                                 # revenir à la version précédente
+kubectl -n bernstein delete pod postgres-0                                    # redémarrer Postgres : même nom, même disque
+kubectl -n bernstein set resources deploy/redis --limits=cpu=200m             # changer une limite (hors git, redémarre Redis)
+```
+
+**Les nœuds**
+
+```bash
+kubectl drain <nœud> --ignore-daemonsets --delete-emptydir-data               # vider un nœud (choisir celui sans postgres-0)
+kubectl uncordon <nœud>                                                       # le remettre en service
+kubectl cordon <nœud>                                                         # seulement bloquer les nouveaux pods
+```
+
+**La base et la file**
+
+```bash
+kubectl -n bernstein exec postgres-0 -- psql -U postgres -d postgres -c 'SELECT vote, COUNT(*) FROM votes GROUP BY vote'   # les votes
+kubectl -n bernstein exec deploy/redis -- redis-cli LLEN votes                # les votes en attente (0 si le worker tourne)
+kubectl -n bernstein get pvc                                                  # le disque de Postgres
+```
+
+**Voir et diagnostiquer**
+
+```bash
+kubectl -n bernstein get pods -o wide -w                                      # les pods en direct, et leur nœud
+kubectl -n bernstein describe pod <pod>                                       # pourquoi il ne démarre pas (Events en bas)
+kubectl -n bernstein logs <pod> --previous                                    # avec --previous : ceux d'avant un crash
+kubectl -n bernstein get events --sort-by=.lastTimestamp                      # ce qui s'est passé, dans l'ordre
+kubectl -n bernstein top pods                                                 # CPU et mémoire consommés
+kubectl -n bernstein get hpa,pdb                                              # l'autoscaler et les budgets de drain
+```
+
+Plus de commandes de diagnostic : [guide 9.10](k8s-study-guide.md#910-commandes-utiles-pendant-la-soutenance).
+
 ## La grille (15 critères, 32 points)
 
 Le rapport de mi-parcours note ces 15 critères, et la soutenance finale reprend la même grille ([`SUBJECT.md`](../subject/SUBJECT.md#grading-rubric-mid-term-report)). Pour chacun : la réponse en quelques phrases, puis la commande à montrer. Les questions 1 à 16 plus bas détaillent ; celles marquées « hors grille » ne servent que si l'évaluateur creuse.
