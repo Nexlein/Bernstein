@@ -1,6 +1,6 @@
 # Bernstein — Subject (v2, condensed)
 
-Source: [`bernstein-project.pdf`](bernstein-project.pdf). This file only restates what the PDF says. App details (ports, probes, env vars, versions) are in [`poll-application/README.md`](../../poll-application/README.md), not in the PDF.
+Source: [`bernstein-project.pdf`](bernstein-project.pdf). This file only restates what the PDF says, except the [grading rubric](#grading-rubric-mid-term-report), taken from the mid-term defense report. App details (ports, probes, env vars, versions) are in [`poll-application/README.md`](../../poll-application/README.md), not in the PDF.
 
 ## The app
 
@@ -32,3 +32,25 @@ An evaluator with a ready Kubernetes cluster on the same platform must be able t
 2. **No-downtime update**: the source of one app is changed and redeployed. Continuously requesting the app must not produce any error.
 3. **Technical choices justification**: every decision, or decision not to act, is discussed. "A deployment that works is not enough": resilient, scalable and easy to operate matter. Read the tools' documentation.
 4. **Technical mastery**: questions like "what happens if we `kubectl drain` this node?" or "how would we limit Redis's CPU?".
+
+## Grading rubric (mid-term report)
+
+Not in the PDF: the criteria of the mid-term defense report, the same grid as the final defense. 32 points. Our answer to each criterion, with the command to show: [cheatsheet, la grille](../defense/cheatsheet.md#la-grille-15-critères-32-points).
+
+| Criterion                                            | Points |
+| ---------------------------------------------------- | -----: |
+| Initial deployment - App working                     |      4 |
+| Initial deployment - Persistent data                 |      2 |
+| Initial deployment - Private Docker registry         |      1 |
+| Redeployment - No-downtime update                    |      2 |
+| Justification - Probes                               |      2 |
+| Justification - Restart policies                     |      1 |
+| Justification - Resource limits                      |      2 |
+| Justification - Exposed ports                        |      1 |
+| Justification - Load balancers                       |      4 |
+| Justification - Affinity policies                    |      2 |
+| Justification - Number of nodes                      |      1 |
+| Justification - Repository cleanliness and structure |      1 |
+| Justification - Documentation                        |      2 |
+| Justification - Auto-scaling                         |      6 |
+| Justification - Replicas                             |      1 |
