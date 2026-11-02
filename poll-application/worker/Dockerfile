@@ -6,7 +6,7 @@ COPY pom.xml .
 COPY src ./src
 RUN mvn -q -B package
 
-FROM eclipse-temurin:25-jre@sha256:78f1f183913482ef390c2722f46c3f0ce76ada341d69590e7c482ec943ee72d5
+FROM eclipse-temurin:25-jre@sha256:ecdc0adb37bde1a281c4d245a3cd535004b1fc8322d560f5b09463b248c81df0
 
 WORKDIR /app
 
